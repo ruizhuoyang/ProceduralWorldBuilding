@@ -23,6 +23,17 @@ import {
   DEFAULT_CHUNK_SIZE,
   meshChunks,
 } from './lib/voxel/chunks'
+import {
+  addRain,
+  buildWaterDensityGrid,
+  createHydroState,
+  DEFAULT_HYDRO_PARAMS,
+  ensureHydroState,
+  resetHydro,
+  stepHydrology,
+  type HydroParams,
+  type HydroState,
+} from './lib/voxel/hydrology'
 import type { ColorMode, NoiseLayer } from './lib/noise'
 import {
   generateHeightfield,
@@ -131,19 +142,29 @@ function App() {
     chunked: true,
     chunkBounds: false,
     chunkTint: false,
+    showWater: true,
   })
   const [voxelChunkSize, setVoxelChunkSize] = useState(DEFAULT_CHUNK_SIZE)
+  const [hydroParams, setHydroParams] = useState<HydroParams>(DEFAULT_HYDRO_PARAMS)
+  const [hydroState, setHydroState] = useState<HydroState>(() =>
+    createHydroState(createDefaultVoxelParams().resolution, createDefaultVoxelParams().extent),
+  )
+  const [hydroRunning, setHydroRunning] = useState(false)
   const voxelDebug = voxelDisplay.mode === 'debug'
   const voxelChunked = !voxelDebug && voxelDisplay.chunked
-  // The whole grid is only needed by the debug view and the unchunked mesh.
-  const voxelGrid = useMemo(() => (voxelChunked ? null : buildVoxelGrid(voxelParams)), [voxelChunked, voxelParams])
+  // Full grid when debugging, unchunked mesh, or hydrology is visible/running.
+  const needFullGrid = !voxelChunked || voxelDisplay.showWater || hydroRunning
+  const voxelGrid = useMemo(
+    () => (needFullGrid ? buildVoxelGrid(voxelParams) : null),
+    [needFullGrid, voxelParams],
+  )
   const voxelSurface = useMemo(
     () => (voxelDebug && voxelGrid ? collectSurfaceVoxels(voxelGrid, voxelParams.isoLevel) : null),
     [voxelDebug, voxelGrid, voxelParams.isoLevel],
   )
   const voxelMesh = useMemo(
-    () => (voxelDebug || !voxelGrid ? null : marchingCubes(voxelGrid, voxelParams.isoLevel)),
-    [voxelDebug, voxelGrid, voxelParams.isoLevel],
+    () => (voxelDebug || voxelChunked || !voxelGrid ? null : marchingCubes(voxelGrid, voxelParams.isoLevel)),
+    [voxelDebug, voxelChunked, voxelGrid, voxelParams.isoLevel],
   )
 
   // Chunked path: densities ignore the iso level, so moving the iso slider only re-meshes.
@@ -165,6 +186,76 @@ function App() {
     () => (chunkDensities ? meshChunks(chunkLayout, chunkDensities, voxelIso) : null),
     [chunkLayout, chunkDensities, voxelIso],
   )
+
+  const handleVoxelParamsChange = useCallback((params: VoxelParams) => {
+    setVoxelParams(params)
+    setHydroState(createHydroState(params.resolution, params.extent))
+    setHydroRunning(false)
+  }, [])
+
+  const waterMeshData = useMemo(() => {
+    if (!voxelDisplay.showWater || !voxelGrid || hydroState.totalWater <= 1e-4) return null
+    const waterGrid = buildWaterDensityGrid(hydroState, voxelGrid, voxelIso, hydroParams.fillThreshold)
+    return marchingCubes(waterGrid, 0)
+  }, [voxelDisplay.showWater, voxelGrid, hydroState, voxelIso, hydroParams.fillThreshold])
+
+  const hydroTerrainRef = useRef(voxelGrid)
+  const hydroParamsRef = useRef(hydroParams)
+  const hydroIsoRef = useRef(voxelIso)
+  useEffect(() => { hydroTerrainRef.current = voxelGrid }, [voxelGrid])
+  useEffect(() => { hydroParamsRef.current = hydroParams }, [hydroParams])
+  useEffect(() => { hydroIsoRef.current = voxelIso }, [voxelIso])
+
+  const handleHydroRain = useCallback(() => {
+    const grid = hydroTerrainRef.current
+    if (!grid) return
+    setHydroState((s) => {
+      const state = ensureHydroState(s, grid.resolution, grid.extent)
+      addRain(state, grid, hydroIsoRef.current, hydroParamsRef.current)
+      stepHydrology(state, grid, hydroIsoRef.current, hydroParamsRef.current)
+      return { ...state, water: state.water, totalWater: state.totalWater, steps: state.steps }
+    })
+    setVoxelDisplay((d) => (d.showWater ? d : { ...d, showWater: true }))
+  }, [])
+
+  const handleHydroStep = useCallback(() => {
+    const grid = hydroTerrainRef.current
+    if (!grid) return
+    setHydroState((s) => {
+      const state = ensureHydroState(s, grid.resolution, grid.extent)
+      stepHydrology(state, grid, hydroIsoRef.current, hydroParamsRef.current)
+      return { ...state, water: state.water, totalWater: state.totalWater, steps: state.steps }
+    })
+  }, [])
+
+  const handleHydroReset = useCallback(() => {
+    setHydroState((s) => resetHydro({ ...s, water: s.water }))
+    setHydroRunning(false)
+  }, [])
+
+  useEffect(() => {
+    if (!hydroRunning || view !== 'voxel') return
+    let frameId = 0
+    let last = performance.now()
+    const tick = (now: number) => {
+      // ~20 Hz so MC rebuilds stay responsive
+      if (now - last >= 50) {
+        last = now
+        const grid = hydroTerrainRef.current
+        if (grid) {
+          setHydroState((s) => {
+            const state = ensureHydroState(s, grid.resolution, grid.extent)
+            addRain(state, grid, hydroIsoRef.current, hydroParamsRef.current)
+            stepHydrology(state, grid, hydroIsoRef.current, hydroParamsRef.current)
+            return { ...state, water: state.water, totalWater: state.totalWater, steps: state.steps }
+          })
+        }
+      }
+      frameId = requestAnimationFrame(tick)
+    }
+    frameId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frameId)
+  }, [hydroRunning, view])
 
   const voxelStats = useMemo(() => {
     let triangles: number | null = voxelMesh ? voxelMesh.indices.length / 3 : null
@@ -446,6 +537,7 @@ function App() {
               surface={voxelSurface}
               mesh={voxelMesh}
               chunks={chunkMeshes}
+              waterMesh={waterMeshData}
               display={voxelDisplay}
             />
           )}
@@ -477,11 +569,19 @@ function App() {
         {view === 'voxel' ? (
           <VoxelPanel
             params={voxelParams}
-            onParamsChange={setVoxelParams}
+            onParamsChange={handleVoxelParamsChange}
             display={voxelDisplay}
             onDisplayChange={setVoxelDisplay}
             chunkSize={voxelChunkSize}
             onChunkSizeChange={setVoxelChunkSize}
+            hydro={hydroParams}
+            onHydroChange={setHydroParams}
+            hydroRunning={hydroRunning}
+            onHydroRunningChange={setHydroRunning}
+            onHydroRain={handleHydroRain}
+            onHydroStep={handleHydroStep}
+            onHydroReset={handleHydroReset}
+            totalWater={hydroState.totalWater}
             stats={voxelStats}
           />
         ) : (

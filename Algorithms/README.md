@@ -10,10 +10,11 @@ Procedural algorithms used to generate heightfields, erode terrain, combine dens
 | [hydraulic-erosion.md](hydraulic-erosion.md) | Particle-based hydraulic erosion |
 | [csg-density.md](csg-density.md) | Density CSG (union / subtract / intersect) |
 | [marching-cubes.md](marching-cubes.md) | Marching Cubes isosurface extraction |
+| [voxel-hydrology.md](voxel-hydrology.md) | Rain → flow → pool on the voxel lattice |
 
 ## Related research themes (course)
 
 - **Topography** — noise + erosion
-- **Volumetric form** — CSG + Marching Cubes
+- **Volumetric form** — CSG + Marching Cubes + voxel hydrology
 
 Back to [vault README](../README.md).

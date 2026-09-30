@@ -12,6 +12,7 @@ import {
   type VoxelOperation,
   type VoxelParams,
 } from '../lib/voxel/voxelField'
+import type { HydroParams } from '../lib/voxel/hydrology'
 import './SidePanel.css'
 
 type VoxelPanelProps = {
@@ -22,6 +23,14 @@ type VoxelPanelProps = {
   /** Cells per chunk edge. */
   chunkSize: number
   onChunkSizeChange: (size: number) => void
+  hydro: HydroParams
+  onHydroChange: (params: HydroParams) => void
+  hydroRunning: boolean
+  onHydroRunningChange: (running: boolean) => void
+  onHydroRain: () => void
+  onHydroStep: () => void
+  onHydroReset: () => void
+  totalWater: number
   stats: {
     samples: number
     solid: number | null
@@ -127,6 +136,14 @@ export default function VoxelPanel({
   onDisplayChange,
   chunkSize,
   onChunkSizeChange,
+  hydro,
+  onHydroChange,
+  hydroRunning,
+  onHydroRunningChange,
+  onHydroRain,
+  onHydroStep,
+  onHydroReset,
+  totalWater,
   stats,
 }: VoxelPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(params.operations[0]?.id ?? null)
@@ -135,6 +152,8 @@ export default function VoxelPanel({
 
   const update = <Key extends keyof VoxelParams>(key: Key, value: VoxelParams[Key]) =>
     onParamsChange({ ...params, [key]: value })
+  const updateHydro = <Key extends keyof HydroParams>(key: Key, value: HydroParams[Key]) =>
+    onHydroChange({ ...hydro, [key]: value })
   const ops = params.operations
   const setOps = (next: VoxelOperation[]) => update('operations', next)
   const patchOp = (id: string, patch: Partial<VoxelOperation>) =>
@@ -203,6 +222,38 @@ export default function VoxelPanel({
           )}
         </>
       )}
+
+      <div className="side-panel__section">Hydrology</div>
+      <ToggleRow label="Show Water" checked={display.showWater} onChange={(v) => onDisplayChange({ ...display, showWater: v })} />
+      <ParamSlider id="hydro-rain-amount" label="Rain Amount" value={hydro.rainAmount} min={0.05} max={1} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => updateHydro('rainAmount', v)} />
+      <ParamSlider id="hydro-rain-columns" label="Rain Columns" value={hydro.rainColumns} min={1} max={256} step={1} format={(v) => String(v)} onChange={(v) => updateHydro('rainColumns', v)} />
+      <ParamSlider id="hydro-flow" label="Flow Rate" value={hydro.flowRate} min={0.05} max={1} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => updateHydro('flowRate', v)} />
+      <ParamSlider id="hydro-evap" label="Evaporation" value={hydro.evaporation} min={0} max={0.05} step={0.001} format={(v) => v.toFixed(3)} onChange={(v) => updateHydro('evaporation', v)} />
+      <div className="side-panel__row">
+        <button type="button" className="side-panel__button" style={{ flex: 1 }} onClick={onHydroRain}>
+          Add Rain
+        </button>
+        <button type="button" className="side-panel__button" style={{ flex: 1 }} onClick={onHydroStep} disabled={hydroRunning}>
+          Step
+        </button>
+      </div>
+      <div className="side-panel__row">
+        <button
+          type="button"
+          className={`side-panel__button ${hydroRunning ? '' : 'side-panel__button--accent'}`}
+          style={{ flex: 1 }}
+          onClick={() => onHydroRunningChange(!hydroRunning)}
+        >
+          {hydroRunning ? '■ Stop' : '▶ Run'}
+        </button>
+        <button type="button" className="side-panel__button" style={{ flex: 1 }} onClick={onHydroReset}>
+          Reset Water
+        </button>
+      </div>
+      <StatRow label="Total Water" value={Number(totalWater.toFixed(2))} />
+      <p className="side-panel__hint">
+        Rain falls into empty cells, drains by gravity, then flows sideways into valleys. Best at resolution ≤ 48³.
+      </p>
 
       <div className="side-panel__section">Operations (top → bottom)</div>
       <div className="layer-list">

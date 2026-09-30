@@ -23,6 +23,8 @@ export type VoxelDisplay = {
   chunkBounds: boolean
   /** Chunked mesh: give each chunk its own colour. */
   chunkTint: boolean
+  /** Show the hydrology water mesh. */
+  showWater: boolean
 }
 
 type VoxelCanvasProps = {
@@ -36,6 +38,8 @@ type VoxelCanvasProps = {
   mesh: MeshData | null
   /** Per-chunk meshes; null when not in chunked mesh mode. */
   chunks: ChunkMesh[] | null
+  /** Water volume Marching Cubes mesh. */
+  waterMesh: MeshData | null
   display: VoxelDisplay
 }
 
@@ -53,6 +57,7 @@ type SceneObjects = {
   /** Persistent per chunk key; only the geometry is swapped on rebuild. */
   chunkMeshes: Map<string, ChunkObject>
   chunkBoxes: THREE.Group
+  waterMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>
 }
 
 const EMPTY_COLOR = new THREE.Color(0x14305e)
@@ -61,10 +66,11 @@ const SOLID_COLOR = new THREE.Color(0xf28a2e)
 const LOW_COLOR = new THREE.Color(0x2b8f6a)
 const HIGH_COLOR = new THREE.Color(0xd8f5e6)
 const MESH_COLOR = 0x5fbf8f
+const WATER_COLOR = 0x3a8fd4
 const CHUNK_BOX_COLOR = 0xf2c14e
 const EMPTY_CHUNK_BOX_COLOR = 0x3a3f4b
 
-export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chunks, display }: VoxelCanvasProps) {
+export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chunks, waterMesh, display }: VoxelCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const objectsRef = useRef<SceneObjects | null>(null)
 
@@ -113,6 +119,21 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
     )
     scene.add(surfaceMesh, surfaceWire)
 
+    const waterSurface = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshStandardMaterial({
+        color: WATER_COLOR,
+        roughness: 0.35,
+        metalness: 0.05,
+        transparent: true,
+        opacity: 0.55,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    )
+    waterSurface.visible = false
+    scene.add(waterSurface)
+
     const content = new THREE.Group()
     const chunkGroup = new THREE.Group()
     const chunkBoxes = new THREE.Group()
@@ -128,6 +149,7 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
       chunkGroup,
       chunkMeshes: new Map(),
       chunkBoxes,
+      waterMesh: waterSurface,
     }
 
     let frameId = 0
@@ -160,6 +182,8 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
       surfaceMesh.geometry.dispose()
       surfaceMesh.material.dispose()
       surfaceWire.material.dispose()
+      waterSurface.geometry.dispose()
+      waterSurface.material.dispose()
       floor.dispose()
       renderer.dispose()
       container.removeChild(renderer.domElement)
@@ -192,6 +216,23 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
       objects.chunkBoxes.add(new THREE.Box3Helper(box, empty ? EMPTY_CHUNK_BOX_COLOR : CHUNK_BOX_COLOR))
     }
   }, [chunks])
+
+  // ── Water Marching Cubes mesh ──
+  useEffect(() => {
+    const objects = objectsRef.current
+    if (!objects) return
+    if (!waterMesh || waterMesh.indices.length === 0) {
+      objects.waterMesh.visible = false
+      return
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(waterMesh.positions, 3))
+    geometry.setIndex(new THREE.BufferAttribute(waterMesh.indices, 1))
+    geometry.computeVertexNormals()
+    objects.waterMesh.geometry.dispose()
+    objects.waterMesh.geometry = geometry
+    objects.waterMesh.visible = display.showWater
+  }, [waterMesh, display.showWater])
 
   // ── Debug visualization + bounds: rebuilt when the field changes ──
   useEffect(() => {
@@ -232,7 +273,8 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
     objects.chunkGroup.visible = showChunks
     objects.chunkBoxes.visible = showChunks && display.chunkBounds
     styleChunkMeshes(objects, display)
-  }, [display, grid, isoLevel, surface, mesh, chunks])
+    objects.waterMesh.visible = display.showWater && waterMesh !== null && waterMesh.indices.length > 0
+  }, [display, grid, isoLevel, surface, mesh, chunks, waterMesh])
 
   return <div ref={containerRef} className="three-canvas" aria-label="Voxel density field" />
 }
