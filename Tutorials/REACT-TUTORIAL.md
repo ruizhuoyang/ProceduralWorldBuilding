@@ -12,7 +12,7 @@ Node.js includes **npm** (Node Package Manager), which downloads and manages Rea
 
 ### Check if Node.js is already installed
 
-Open **PowerShell** or **Terminal** in Cursor (menu: **Terminal → New Terminal**), then type:
+Open **PowerShell** or **Terminal** in Cursor (menu: **Terminal �?New Terminal**), then type:
 
 ```powershell
 node --version
@@ -37,29 +37,29 @@ npm --version
 
 ## Step 1: Open the Project Folder in Terminal
 
-**Important:** All commands must run inside the project folder — not your home folder.
+**Important:** All commands must run inside the project folder �?not your home folder.
 
 Make sure your terminal shows this path:
 
 ```powershell
-cd C:\Users\ry369\Desktop\ProceduralWorldBuilding
+cd C:\Users\ry369\Desktop\pwb_class_01\my-react-app
 ```
 
 Your prompt should look like:
 
 ```text
-PS C:\Users\ry369\Desktop\ProceduralWorldBuilding>
+PS C:\Users\ry369\Desktop\pwb_class_01\my-react-app>
 ```
 
 If it shows `PS C:\Users\ry369>` instead, you are in the wrong folder. Run the `cd` command above first.
 
-Tip: In Cursor, open this folder as a project, then use **Terminal → New Terminal**. It usually starts in the right place.
+Tip: In Cursor, open this folder as a project, then use **Terminal �?New Terminal**. It usually starts in the right place.
 
 ---
 
 ## Step 2: Create a New React + TypeScript App
 
-We use **Vite** — a fast, modern tool for creating React projects.
+We use **Vite** �?a fast, modern tool for creating React projects.
 
 Run:
 
@@ -75,7 +75,7 @@ This creates the **simplest** React + TypeScript setup (no extra options like SW
 
 If you run `npm create vite@latest .` **without** the template flag, Vite will ask questions one by one.
 
-Use **↑** and **↓** to move, then **Enter** to confirm.
+Use **�?* and **�?* to move, then **Enter** to confirm.
 
 ### Question 1: Current directory is not empty
 
@@ -135,7 +135,7 @@ Select a variant:
 
 | What to pick | Why |
 |--------------|-----|
-| **TypeScript** | Basic TypeScript — no extra tools. Best for beginners. |
+| **TypeScript** | Basic TypeScript �?no extra tools. Best for beginners. |
 
 Do **not** pick "TypeScript + SWC" or "JavaScript" for this guide.
 
@@ -162,7 +162,7 @@ Both work. ESLint is the safer choice for learning.
 You should see something like:
 
 ```text
-Scaffolding project in C:\Users\ry369\Desktop\ProceduralWorldBuilding...
+Scaffolding project in C:\Users\ry369\Desktop\pwb_class_01\my-react-app...
 Done. Now run:
 
   npm install
@@ -173,7 +173,7 @@ Done. Now run:
 
 ## Step 3: Install Dependencies
 
-**Make sure you are still in the project folder** (`ProceduralWorldBuilding`).
+**Make sure you are still in the project folder** (`pwb_class_01\my-react-app`).
 
 Run:
 
@@ -181,11 +181,11 @@ Run:
 npm install
 ```
 
-This reads `package.json` and downloads everything React needs. It may take 1–2 minutes.
+This reads `package.json` and downloads everything React needs. It may take 1�? minutes.
 
 When it finishes, you should see a `node_modules` folder (do not edit files inside it).
 
-Quick check — this should work without error:
+Quick check �?this should work without error:
 
 ```powershell
 dir package.json
@@ -206,7 +206,7 @@ You should see output similar to:
 ```text
   VITE v7.x.x  ready in xxx ms
 
-  ➜  Local:   http://localhost:5173/
+  �? Local:   http://localhost:5173/
 ```
 
 Open that link in your browser (Chrome, Edge, Firefox, etc.).
@@ -233,7 +233,7 @@ Ctrl + C
    ```
 
 3. Save the file (`Ctrl + S`).
-4. Look at your browser — the page updates automatically. No need to refresh.
+4. Look at your browser �?the page updates automatically. No need to refresh.
 
 That is **hot reload**: React shows your changes instantly while the dev server is running.
 
@@ -243,7 +243,7 @@ That is **hot reload**: React shows your changes instantly while the dev server 
 
 TypeScript is JavaScript with **types**. It helps catch errors before you run the app.
 
-Example — in `App.tsx` you might see:
+Example �?in `App.tsx` you might see:
 
 ```tsx
 function App() {
@@ -273,17 +273,17 @@ You do not need to learn all of TypeScript on day one. Start by editing text and
 After setup, the important files and folders are:
 
 ```text
-ProceduralWorldBuilding/
+pwb_class_01\my-react-app\
 ├── index.html          # Main HTML page (entry point)
 ├── package.json        # Project settings and scripts
 ├── tsconfig.json       # TypeScript settings
 ├── tsconfig.app.json   # TypeScript settings for your app code
 ├── vite.config.ts      # Vite configuration
 ├── src/
-│   ├── main.tsx        # Loads React into the page
-│   ├── App.tsx         # Main React component (start editing here)
-│   ├── App.css         # Styles for App
-│   └── index.css       # Global styles
+�?  ├── main.tsx        # Loads React into the page
+�?  ├── App.tsx         # Main React component (start editing here)
+�?  ├── App.css         # Styles for App
+�?  └── index.css       # Global styles
 └── node_modules/       # Installed packages (auto-generated, do not edit)
 ```
 
@@ -300,7 +300,7 @@ You ran the command in the **wrong folder**.
 Fix:
 
 ```powershell
-cd C:\Users\ry369\Desktop\ProceduralWorldBuilding
+cd C:\Users\ry369\Desktop\pwb_class_01\my-react-app
 npm install
 ```
 
@@ -335,7 +335,7 @@ npm install
 Your project may have `App.jsx` instead of `App.tsx`. For the basic TypeScript setup, run the create command again with the TypeScript template:
 
 ```powershell
-cd C:\Users\ry369\Desktop\ProceduralWorldBuilding
+cd C:\Users\ry369\Desktop\pwb_class_01\my-react-app
 npm create vite@latest . -- --template react-ts
 ```
 
@@ -358,7 +358,7 @@ Once everything works:
 Copy and run these **one at a time** in PowerShell:
 
 ```powershell
-cd C:\Users\ry369\Desktop\ProceduralWorldBuilding
+cd C:\Users\ry369\Desktop\pwb_class_01\my-react-app
 npm create vite@latest . -- --template react-ts
 npm install
 npm run dev
