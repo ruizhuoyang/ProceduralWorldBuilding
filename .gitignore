@@ -1,0 +1,17 @@
+# Logs / OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Accidental installs at vault root (app deps live in my-react-app/)
+/node_modules/
+
+# Env
+*.local
+.env
+.env.*
+!.env.example
+
+# Build / editor
+dist/
+.firebase/
