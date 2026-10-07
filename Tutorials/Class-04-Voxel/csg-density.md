@@ -1,4 +1,4 @@
-# Density CSG
+﻿# Density CSG
 
 ## What
 
@@ -20,15 +20,15 @@ Pipeline: first operation fills the grid (base); each later step applies `applyC
 
 ## Code pointers
 
-- [`my-react-app/src/lib/voxel/csg.ts`](../my-react-app/src/lib/voxel/csg.ts)
-- [`my-react-app/src/lib/voxel/densityShapes.ts`](../my-react-app/src/lib/voxel/densityShapes.ts)
-- [`my-react-app/src/lib/voxel/voxelField.ts`](../my-react-app/src/lib/voxel/voxelField.ts)
+- [`my-react-app/src/lib/voxel/csg.ts`](../../my-react-app/src/lib/voxel/csg.ts)
+- [`my-react-app/src/lib/voxel/densityShapes.ts`](../../my-react-app/src/lib/voxel/densityShapes.ts)
+- [`my-react-app/src/lib/voxel/voxelField.ts`](../../my-react-app/src/lib/voxel/voxelField.ts)
 
 ## Screenshot
 
-![Voxel CSG mesh](../Docs/assets/04-voxel-mesh.png)
+![Voxel CSG mesh](../../Docs/assets/04-voxel-mesh.png)
 
 ## Related
 
 - [Marching Cubes](marching-cubes.md)
-- [Density grid](../Data-structures/density-grid.md)
+- [Density grid](density-grid.md)

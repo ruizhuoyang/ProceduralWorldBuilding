@@ -2,16 +2,20 @@
 
 Vite + React 19 + TypeScript + Three.js implementation for this vault.
 
+**Live:** https://procedural-world-buildin-f602c.web.app
+
 ## Documentation
 
 Start at the vault entry: **[../README.md](../README.md)** (table of contents, study notes, screenshots).
 
 | Topic | Vault note |
 |-------|------------|
+| Study notebook (Classes 01–05) | [../Tutorials/README.md](../Tutorials/README.md) |
 | Architecture / views | [../Project/README.md](../Project/README.md) |
 | Atmosphere | [../Project/environment.md](../Project/environment.md) |
 | Firebase | [../Project/firebase.md](../Project/firebase.md) |
-| Chunking | [../Data-structures/chunking.md](../Data-structures/chunking.md) |
+| Voxel | [../Tutorials/Class-04-Voxel/README.md](../Tutorials/Class-04-Voxel/README.md) |
+| Water shaders | [../Tutorials/Class-05-Shader/README.md](../Tutorials/Class-05-Shader/README.md) |
 | UI style | [../Style-guides/STYLE-GUIDE.md](../Style-guides/STYLE-GUIDE.md) |
 
 ## Run locally

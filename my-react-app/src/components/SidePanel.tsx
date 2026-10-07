@@ -57,7 +57,7 @@ const DEFAULT_OPEN: Record<SectionId, boolean> = {
   environment: false,
   camera: false,
   world: false,
-  layers: true,
+  layers: false,
   noiseOutput: true,
   simulation: true,
   analysis: false,
@@ -214,9 +214,7 @@ export default function SidePanel({
   liveSync,
   onLiveSyncChange,
 }: SidePanelProps) {
-  const [expandedLayer, setExpandedLayer] = useState<string | null>(
-    layers[0]?.id ?? null,
-  )
+  const [expandedLayer, setExpandedLayer] = useState<string | null>(null)
   const [openSections, setOpenSections] = useState<Record<SectionId, boolean>>(DEFAULT_OPEN)
 
   const toggleSection = (id: SectionId) =>

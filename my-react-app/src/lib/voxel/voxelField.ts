@@ -1,14 +1,24 @@
 // ─────────────────────────────────────────────────────────
 // Voxel field — turns UI parameters into a filled density grid
 //
-// Pipeline: operations[0] fills the grid (base shape), then every
-// later operation is combined into that same grid in list order.
-// The finished DensityGrid is what Marching Cubes / chunking will consume.
+// Two sources:
+//   heightfield — 2D noise heightmap extruded into density (default)
+//   csg         — sequential density shapes (sphere / box / noise volume)
+//
+// The finished DensityGrid feeds Marching Cubes, chunking, and hydrology.
 // ─────────────────────────────────────────────────────────
 
 import { createDensityGrid, fillDensityGrid, type DensityFn, type DensityGrid } from './densityGrid'
 import { applyCsg, combineDensity, type CsgOp } from './csg'
 import { shapeToDensity, type DensityShape } from './densityShapes'
+import {
+  DEFAULT_HEIGHTFIELD_TERRAIN,
+  generateVoxelHeightfield,
+  heightfieldToDensity,
+  type HeightfieldTerrainParams,
+} from './heightfieldTerrain'
+
+export type VoxelSource = 'heightfield' | 'csg'
 
 export type VoxelOperation = {
   id: string
@@ -24,7 +34,11 @@ export type VoxelParams = {
   extent: number
   /** Density threshold separating solid from empty. */
   isoLevel: number
-  /** Applied in order; the first entry is the base shape. */
+  /** Heightmap terrain vs constructive solid geometry. */
+  source: VoxelSource
+  /** Used when source === 'heightfield'. */
+  heightfield: HeightfieldTerrainParams
+  /** Used when source === 'csg'. */
   operations: VoxelOperation[]
 }
 
@@ -44,26 +58,36 @@ export function createDefaultOperations(): VoxelOperation[] {
 
 export function createDefaultVoxelParams(): VoxelParams {
   return {
-    resolution: 64,
+    resolution: 48,
     extent: 8,
     isoLevel: 0,
+    source: 'heightfield',
+    heightfield: { ...DEFAULT_HEIGHTFIELD_TERRAIN },
     operations: createDefaultOperations(),
   }
 }
 
+/** Point-wise density for the current voxel source (chunks + fill). */
+export function composeVoxelDensity(params: VoxelParams): DensityFn {
+  if (params.source === 'heightfield') {
+    const map = generateVoxelHeightfield(params.heightfield)
+    return heightfieldToDensity(
+      map,
+      params.heightfield.mapSize,
+      params.extent,
+      params.heightfield.heightScale,
+    )
+  }
+  return composeDensity(params.operations)
+}
+
 export function buildVoxelGrid(params: VoxelParams): DensityGrid {
   const grid = createDensityGrid(params.resolution, params.extent)
-  const [base, ...rest] = params.operations
-  if (!base) return fillDensityGrid(grid, () => -1)
-
-  fillDensityGrid(grid, shapeToDensity(base.shape))
-  for (const step of rest) applyCsg(grid, shapeToDensity(step.shape), step.op)
-  return grid
+  return fillDensityGrid(grid, composeVoxelDensity(params))
 }
 
 /**
- * The same operation list as a single point-wise function, so any sub-region
- * (e.g. one chunk) can be evaluated without filling the whole grid.
+ * The CSG operation list as a single point-wise function.
  */
 export function composeDensity(operations: VoxelOperation[]): DensityFn {
   const [base, ...rest] = operations
@@ -78,3 +102,6 @@ export function composeDensity(operations: VoxelOperation[]): DensityFn {
     return d
   }
 }
+
+// Re-export applyCsg path helper used only by legacy callers that filled then CSG'd.
+export { applyCsg }

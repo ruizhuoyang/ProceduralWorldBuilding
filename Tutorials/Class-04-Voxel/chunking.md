@@ -1,16 +1,16 @@
-# Chunking in the Voxel Terrain
+﻿# Chunking in the Voxel Terrain
 
 Study note for **Data structures**. Full technical write-up below; screenshot and code pointers first.
 
 ## Screenshot
 
-![Chunk bounds and tinted chunk meshes](../Docs/assets/05-chunk-bounds.png)
+![Chunk bounds and tinted chunk meshes](../../Docs/assets/05-chunk-bounds.png)
 
 ## Code pointers
 
-- [`my-react-app/src/lib/voxel/chunks.ts`](../my-react-app/src/lib/voxel/chunks.ts)
-- [`my-react-app/src/lib/voxel/marchingCubes.ts`](../my-react-app/src/lib/voxel/marchingCubes.ts) — `marchRegion`
-- UI toggles in [`VoxelPanel.tsx`](../my-react-app/src/components/VoxelPanel.tsx)
+- [`my-react-app/src/lib/voxel/chunks.ts`](../../my-react-app/src/lib/voxel/chunks.ts)
+- [`my-react-app/src/lib/voxel/marchingCubes.ts`](../../my-react-app/src/lib/voxel/marchingCubes.ts) — `marchRegion`
+- UI toggles in [`VoxelPanel.tsx`](../../my-react-app/src/components/VoxelPanel.tsx)
 
 ---
 

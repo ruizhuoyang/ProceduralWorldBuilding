@@ -11,11 +11,18 @@ import {
   createOperation,
   type VoxelOperation,
   type VoxelParams,
+  type VoxelSource,
 } from '../lib/voxel/voxelField'
 import type { HydroParams } from '../lib/voxel/hydrology'
+import type { ShaderStudyMode, ShaderStudyParams } from '../lib/shaders/types'
+import { ShaderStudyControls } from './ShaderPanel'
 import './SidePanel.css'
 
+export type VoxelWorkspace = 'field' | 'shaders'
+
 type VoxelPanelProps = {
+  workspace: VoxelWorkspace
+  onWorkspaceChange: (workspace: VoxelWorkspace) => void
   params: VoxelParams
   onParamsChange: (params: VoxelParams) => void
   display: VoxelDisplay
@@ -31,6 +38,10 @@ type VoxelPanelProps = {
   onHydroStep: () => void
   onHydroReset: () => void
   totalWater: number
+  shaderMode: ShaderStudyMode
+  onShaderModeChange: (mode: ShaderStudyMode) => void
+  shaderParams: ShaderStudyParams
+  onShaderParamsChange: (params: ShaderStudyParams) => void
   stats: {
     samples: number
     solid: number | null
@@ -130,6 +141,8 @@ function ShapeControls({ id, shape, half, onChange }: {
 }
 
 export default function VoxelPanel({
+  workspace,
+  onWorkspaceChange,
   params,
   onParamsChange,
   display,
@@ -144,6 +157,10 @@ export default function VoxelPanel({
   onHydroStep,
   onHydroReset,
   totalWater,
+  shaderMode,
+  onShaderModeChange,
+  shaderParams,
+  onShaderParamsChange,
   stats,
 }: VoxelPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(params.operations[0]?.id ?? null)
@@ -154,11 +171,17 @@ export default function VoxelPanel({
     onParamsChange({ ...params, [key]: value })
   const updateHydro = <Key extends keyof HydroParams>(key: Key, value: HydroParams[Key]) =>
     onHydroChange({ ...hydro, [key]: value })
+  const updateHeightfield = <Key extends keyof VoxelParams['heightfield']>(
+    key: Key,
+    value: VoxelParams['heightfield'][Key],
+  ) => onParamsChange({ ...params, heightfield: { ...params.heightfield, [key]: value } })
+  const setSource = (source: VoxelSource) => onParamsChange({ ...params, source })
   const ops = params.operations
   const setOps = (next: VoxelOperation[]) => update('operations', next)
   const patchOp = (id: string, patch: Partial<VoxelOperation>) =>
     setOps(ops.map((o) => (o.id === id ? { ...o, ...patch } : o)))
   const half = params.extent / 2
+  const isHeightfield = params.source === 'heightfield'
 
   const addOp = () => {
     const op = createOperation(newOp, createShape(newShape))
@@ -175,12 +198,47 @@ export default function VoxelPanel({
   }
   const resetField = () => {
     const fresh = createDefaultVoxelParams()
-    onParamsChange(fresh)
+    // Keep the active terrain source so Reset doesn't yank the user across tabs.
+    onParamsChange({ ...fresh, source: params.source })
     setExpandedId(fresh.operations[0].id)
   }
 
   return (
     <aside className="side-panel" aria-label="Voxel terrain controls">
+      <div className="side-panel__section">Mode</div>
+      <nav className="workspace-tabs" aria-label="Voxel mode">
+        <button
+          type="button"
+          className={`workspace-tabs__button ${workspace === 'field' ? 'workspace-tabs__button--active' : ''}`}
+          onClick={() => onWorkspaceChange('field')}
+        >
+          Field
+        </button>
+        <button
+          type="button"
+          className={`workspace-tabs__button ${workspace === 'shaders' ? 'workspace-tabs__button--active' : ''}`}
+          onClick={() => onWorkspaceChange('shaders')}
+        >
+          Shaders
+        </button>
+      </nav>
+      <p className="side-panel__hint">
+        {workspace === 'shaders'
+          ? 'Class 05 water shaders (deform, contact, ripple, particles).'
+          : 'Class 04 density, CSG, Marching Cubes, and hydrology.'}
+      </p>
+
+      {workspace === 'shaders' && (
+        <ShaderStudyControls
+          mode={shaderMode}
+          onModeChange={onShaderModeChange}
+          params={shaderParams}
+          onParamsChange={onShaderParamsChange}
+        />
+      )}
+
+      {workspace === 'field' && (
+      <>
       <div className="side-panel__section">Surface</div>
       <nav className="sub-tabs" aria-label="Voxel view mode">
         <button
@@ -200,9 +258,93 @@ export default function VoxelPanel({
       </nav>
       <ParamSlider id="voxel-iso" label="Iso Level" value={params.isoLevel} min={-2} max={2} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => update('isoLevel', v)} />
 
+      <div className="side-panel__section">Terrain Source</div>
+      <nav className="sub-tabs" aria-label="Voxel terrain source">
+        <button
+          type="button"
+          className={`sub-tabs__button ${isHeightfield ? 'sub-tabs__button--active' : ''}`}
+          onClick={() => setSource('heightfield')}
+        >
+          Heightfield
+        </button>
+        <button
+          type="button"
+          className={`sub-tabs__button ${!isHeightfield ? 'sub-tabs__button--active' : ''}`}
+          onClick={() => setSource('csg')}
+        >
+          CSG Shapes
+        </button>
+      </nav>
+
       <div className="side-panel__section">Density Grid</div>
       <ParamSlider id="voxel-resolution" label="Resolution" value={params.resolution} min={8} max={64} step={2} format={(v) => `${v}³`} onChange={(v) => update('resolution', v)} />
       <ParamSlider id="voxel-extent" label="Extent" value={params.extent} min={2} max={16} step={0.5} format={(v) => v.toFixed(1)} onChange={(v) => update('extent', v)} />
+
+      {isHeightfield && (
+        <>
+          <div className="side-panel__section">Heightfield Terrain</div>
+          <ParamSlider
+            id="voxel-hf-height"
+            label="Height Scale"
+            value={params.heightfield.heightScale}
+            min={0.5}
+            max={params.extent}
+            step={0.1}
+            format={(v) => v.toFixed(1)}
+            onChange={(v) => updateHeightfield('heightScale', v)}
+          />
+          <ParamSlider
+            id="voxel-hf-scale"
+            label="Noise Scale"
+            value={params.heightfield.noiseScale}
+            min={0.5}
+            max={8}
+            step={0.1}
+            format={(v) => v.toFixed(1)}
+            onChange={(v) => updateHeightfield('noiseScale', v)}
+          />
+          <ParamSlider
+            id="voxel-hf-octaves"
+            label="Octaves"
+            value={params.heightfield.octaves}
+            min={1}
+            max={8}
+            step={1}
+            format={(v) => String(v)}
+            onChange={(v) => updateHeightfield('octaves', v)}
+          />
+          <ParamSlider
+            id="voxel-hf-power"
+            label="Power"
+            value={params.heightfield.power}
+            min={0.6}
+            max={2.5}
+            step={0.05}
+            format={(v) => v.toFixed(2)}
+            onChange={(v) => updateHeightfield('power', v)}
+          />
+          <ParamSlider
+            id="voxel-hf-map"
+            label="Map Size"
+            value={params.heightfield.mapSize}
+            min={32}
+            max={256}
+            step={16}
+            format={(v) => `${v}²`}
+            onChange={(v) => updateHeightfield('mapSize', v)}
+          />
+          <button
+            type="button"
+            className="side-panel__button side-panel__button--accent"
+            onClick={() => updateHeightfield('seed', Math.floor(Math.random() * 100000))}
+          >
+            Randomize Seed ({params.heightfield.seed})
+          </button>
+          <p className="side-panel__hint">
+            Voxel-local fBm heightmap (independent of 2D Terrain). Rain will pool in the valleys.
+          </p>
+        </>
+      )}
 
       {display.mode === 'mesh' && (
         <>
@@ -225,8 +367,8 @@ export default function VoxelPanel({
 
       <div className="side-panel__section">Hydrology</div>
       <ToggleRow label="Show Water" checked={display.showWater} onChange={(v) => onDisplayChange({ ...display, showWater: v })} />
-      <ParamSlider id="hydro-rain-amount" label="Rain Amount" value={hydro.rainAmount} min={0.05} max={1} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => updateHydro('rainAmount', v)} />
-      <ParamSlider id="hydro-rain-columns" label="Rain Columns" value={hydro.rainColumns} min={1} max={256} step={1} format={(v) => String(v)} onChange={(v) => updateHydro('rainColumns', v)} />
+      <ParamSlider id="hydro-rain-amount" label="Drop Depth" value={hydro.rainAmount} min={0.01} max={0.2} step={0.005} format={(v) => v.toFixed(3)} onChange={(v) => updateHydro('rainAmount', v)} />
+      <ParamSlider id="hydro-rain-columns" label="Drop Count" value={hydro.rainColumns} min={20} max={400} step={10} format={(v) => String(v)} onChange={(v) => updateHydro('rainColumns', v)} />
       <ParamSlider id="hydro-flow" label="Flow Rate" value={hydro.flowRate} min={0.05} max={1} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => updateHydro('flowRate', v)} />
       <ParamSlider id="hydro-evap" label="Evaporation" value={hydro.evaporation} min={0} max={0.05} step={0.001} format={(v) => v.toFixed(3)} onChange={(v) => updateHydro('evaporation', v)} />
       <div className="side-panel__row">
@@ -252,74 +394,84 @@ export default function VoxelPanel({
       </div>
       <StatRow label="Total Water" value={Number(totalWater.toFixed(2))} />
       <p className="side-panel__hint">
-        Rain falls into empty cells, drains by gravity, then flows sideways into valleys. Best at resolution ≤ 48³.
+        Tiny drops fall as particles, then gravity-flow into valleys. Best at resolution ≤ 48³.
       </p>
 
-      <div className="side-panel__section">Operations (top → bottom)</div>
-      <div className="layer-list">
-        {ops.map((step, index) => {
-          const isBase = index === 0
-          const isExpanded = expandedId === step.id
-          return (
-            <div key={step.id} className={`layer-card ${isExpanded ? 'layer-card--expanded' : ''}`}>
-              <div className="layer-card__header">
-                <button type="button" className="layer-card__name" onClick={() => setExpandedId(isExpanded ? null : step.id)}>
-                  {index + 1}. {isBase ? 'Base' : opLabel(step.op)}
-                </button>
-                <span className="layer-card__type">{shapeLabel(step.shape.type)}</span>
-                <div className="layer-card__actions">
-                  <button type="button" title="Move up" disabled={index === 0} onClick={() => moveOp(index, -1)}>↑</button>
-                  <button type="button" title="Move down" disabled={index === ops.length - 1} onClick={() => moveOp(index, 1)}>↓</button>
-                  <button type="button" title="Remove" disabled={ops.length <= 1} onClick={() => removeOp(step.id)}>×</button>
-                </div>
-              </div>
+      {!isHeightfield && (
+        <>
+          <div className="side-panel__section">Operations (top → bottom)</div>
+          <div className="layer-list">
+            {ops.map((step, index) => {
+              const isBase = index === 0
+              const isExpanded = expandedId === step.id
+              return (
+                <div key={step.id} className={`layer-card ${isExpanded ? 'layer-card--expanded' : ''}`}>
+                  <div className="layer-card__header">
+                    <button type="button" className="layer-card__name" onClick={() => setExpandedId(isExpanded ? null : step.id)}>
+                      {index + 1}. {isBase ? 'Base' : opLabel(step.op)}
+                    </button>
+                    <span className="layer-card__type">{shapeLabel(step.shape.type)}</span>
+                    <div className="layer-card__actions">
+                      <button type="button" title="Move up" disabled={index === 0} onClick={() => moveOp(index, -1)}>↑</button>
+                      <button type="button" title="Move down" disabled={index === ops.length - 1} onClick={() => moveOp(index, 1)}>↓</button>
+                      <button type="button" title="Remove" disabled={ops.length <= 1} onClick={() => removeOp(step.id)}>×</button>
+                    </div>
+                  </div>
 
-              {isExpanded && (
-                <div className="layer-card__body">
-                  {!isBase && (
-                    <div className="side-panel__field">
-                      <label className="side-panel__label" htmlFor={`${step.id}-op`}>Operation</label>
-                      <select id={`${step.id}-op`} className="side-panel__select" value={step.op} onChange={(e) => patchOp(step.id, { op: e.target.value as CsgOp })}>
-                        {CSG_OPS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
+                  {isExpanded && (
+                    <div className="layer-card__body">
+                      {!isBase && (
+                        <div className="side-panel__field">
+                          <label className="side-panel__label" htmlFor={`${step.id}-op`}>Operation</label>
+                          <select id={`${step.id}-op`} className="side-panel__select" value={step.op} onChange={(e) => patchOp(step.id, { op: e.target.value as CsgOp })}>
+                            {CSG_OPS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        </div>
+                      )}
+                      <div className="side-panel__field">
+                        <label className="side-panel__label" htmlFor={`${step.id}-shape`}>Shape</label>
+                        <select
+                          id={`${step.id}-shape`}
+                          className="side-panel__select"
+                          value={step.shape.type}
+                          onChange={(e) => patchOp(step.id, { shape: createShape(e.target.value as DensityShapeType, step.shape.center) })}
+                        >
+                          {SHAPE_TYPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                        </select>
+                      </div>
+                      <ShapeControls id={step.id} shape={step.shape} half={half} onChange={(shape) => patchOp(step.id, { shape })} />
                     </div>
                   )}
-                  <div className="side-panel__field">
-                    <label className="side-panel__label" htmlFor={`${step.id}-shape`}>Shape</label>
-                    <select
-                      id={`${step.id}-shape`}
-                      className="side-panel__select"
-                      value={step.shape.type}
-                      onChange={(e) => patchOp(step.id, { shape: createShape(e.target.value as DensityShapeType, step.shape.center) })}
-                    >
-                      {SHAPE_TYPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                    </select>
-                  </div>
-                  <ShapeControls id={step.id} shape={step.shape} half={half} onChange={(shape) => patchOp(step.id, { shape })} />
                 </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
+              )
+            })}
+          </div>
 
-      <div className="side-panel__row">
-        <select className="side-panel__select" aria-label="New operation" value={newOp} onChange={(e) => setNewOp(e.target.value as CsgOp)}>
-          {CSG_OPS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-        <select className="side-panel__select" aria-label="New shape" value={newShape} onChange={(e) => setNewShape(e.target.value as DensityShapeType)}>
-          {SHAPE_TYPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
-      </div>
-      <button type="button" className="side-panel__button side-panel__button--accent" onClick={addOp}>
-        + Add Operation
-      </button>
-      <button type="button" className="side-panel__button" onClick={resetField}>
-        Reset Field
-      </button>
-      <p className="side-panel__hint">
-        Step 1 fills the grid; each later step combines into the result above it, so order matters.
-      </p>
+          <div className="side-panel__row">
+            <select className="side-panel__select" aria-label="New operation" value={newOp} onChange={(e) => setNewOp(e.target.value as CsgOp)}>
+              {CSG_OPS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <select className="side-panel__select" aria-label="New shape" value={newShape} onChange={(e) => setNewShape(e.target.value as DensityShapeType)}>
+              {SHAPE_TYPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </div>
+          <button type="button" className="side-panel__button side-panel__button--accent" onClick={addOp}>
+            + Add Operation
+          </button>
+          <button type="button" className="side-panel__button" onClick={resetField}>
+            Reset Field
+          </button>
+          <p className="side-panel__hint">
+            Step 1 fills the grid; each later step combines into the result above it, so order matters.
+          </p>
+        </>
+      )}
+
+      {isHeightfield && (
+        <button type="button" className="side-panel__button" onClick={resetField}>
+          Reset Terrain
+        </button>
+      )}
 
       <div className="side-panel__section">Display</div>
       {display.mode === 'mesh' ? (
@@ -342,6 +494,8 @@ export default function VoxelPanel({
       <p className="side-panel__hint">
         Density &gt; iso level is solid; the mesh surface sits where density equals the iso level.
       </p>
+      </>
+      )}
     </aside>
   )
 }

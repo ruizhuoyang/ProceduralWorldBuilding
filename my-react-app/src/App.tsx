@@ -12,10 +12,16 @@ import SidePanel, { type SubTab } from './components/SidePanel'
 import ViewSwitcher, { type ViewMode } from './components/ViewSwitcher'
 import FirebaseControls from './components/FirebaseControls'
 import VoxelCanvas, { type VoxelDisplay } from './components/VoxelCanvas'
-import VoxelPanel from './components/VoxelPanel'
+import VoxelPanel, { type VoxelWorkspace } from './components/VoxelPanel'
+import {
+  createDefaultShaderParams,
+  type ShaderStudyMode,
+  type ShaderStudyParams,
+} from './lib/shaders/types'
+import { buildValleyWaterSheet } from './lib/shaders/demoWaterSheet'
 import { collectSurfaceVoxels, countSolid } from './lib/voxel/densityGrid'
 import { marchingCubes } from './lib/voxel/marchingCubes'
-import { buildVoxelGrid, composeDensity, createDefaultVoxelParams, type VoxelParams } from './lib/voxel/voxelField'
+import { buildVoxelGrid, composeVoxelDensity, createDefaultVoxelParams, type VoxelParams } from './lib/voxel/voxelField'
 import {
   buildChunkDensities,
   chunkCount,
@@ -25,11 +31,14 @@ import {
 } from './lib/voxel/chunks'
 import {
   addRain,
-  buildWaterDensityGrid,
+  buildHeightfieldWaterMesh,
+  collectFallingDrops,
   createHydroState,
   DEFAULT_HYDRO_PARAMS,
   ensureHydroState,
+  POST_LAND_FLOW_TICKS,
   resetHydro,
+  stepFall,
   stepHydrology,
   type HydroParams,
   type HydroState,
@@ -103,6 +112,9 @@ const DEFAULT_VIEWPORT: ViewportParams = {
 
 function App() {
   const [view, setView] = useState<ViewMode>('3d')
+  const [voxelWorkspace, setVoxelWorkspace] = useState<VoxelWorkspace>('field')
+  const [shaderMode, setShaderMode] = useState<ShaderStudyMode>('deform')
+  const [shaderParams, setShaderParams] = useState<ShaderStudyParams>(createDefaultShaderParams)
   const [subTab, setSubTab] = useState<SubTab>('noise')
   const [layers, setLayers] = useState<NoiseLayer[]>(createCalibratedLayers)
   const [mapOffset, setMapOffset] = useState<MapOffset>(ZERO_OFFSET)
@@ -150,10 +162,14 @@ function App() {
     createHydroState(createDefaultVoxelParams().resolution, createDefaultVoxelParams().extent),
   )
   const [hydroRunning, setHydroRunning] = useState(false)
+  const [hydroFalling, setHydroFalling] = useState(false)
+  const [hydroFlowing, setHydroFlowing] = useState(false)
+  const hydroFlowLeftRef = useRef(0)
   const voxelDebug = voxelDisplay.mode === 'debug'
   const voxelChunked = !voxelDebug && voxelDisplay.chunked
   // Full grid when debugging, unchunked mesh, or hydrology is visible/running.
-  const needFullGrid = !voxelChunked || voxelDisplay.showWater || hydroRunning
+  const needFullGrid =
+    !voxelChunked || voxelDisplay.showWater || hydroRunning || voxelWorkspace === 'shaders'
   const voxelGrid = useMemo(
     () => (needFullGrid ? buildVoxelGrid(voxelParams) : null),
     [needFullGrid, voxelParams],
@@ -171,7 +187,6 @@ function App() {
   const {
     resolution: voxelResolution,
     extent: voxelExtent,
-    operations: voxelOperations,
     isoLevel: voxelIso,
   } = voxelParams
   const chunkLayout = useMemo(
@@ -179,8 +194,8 @@ function App() {
     [voxelResolution, voxelExtent, voxelChunkSize],
   )
   const chunkDensities = useMemo(
-    () => (voxelChunked ? buildChunkDensities(chunkLayout, composeDensity(voxelOperations)) : null),
-    [voxelChunked, chunkLayout, voxelOperations],
+    () => (voxelChunked ? buildChunkDensities(chunkLayout, composeVoxelDensity(voxelParams)) : null),
+    [voxelChunked, chunkLayout, voxelParams],
   )
   const chunkMeshes = useMemo(
     () => (chunkDensities ? meshChunks(chunkLayout, chunkDensities, voxelIso) : null),
@@ -191,13 +206,46 @@ function App() {
     setVoxelParams(params)
     setHydroState(createHydroState(params.resolution, params.extent))
     setHydroRunning(false)
+    setHydroFalling(false)
+    setHydroFlowing(false)
+    hydroFlowLeftRef.current = 0
   }, [])
 
   const waterMeshData = useMemo(() => {
-    if (!voxelDisplay.showWater || !voxelGrid || hydroState.totalWater <= 1e-4) return null
-    const waterGrid = buildWaterDensityGrid(hydroState, voxelGrid, voxelIso, hydroParams.fillThreshold)
-    return marchingCubes(waterGrid, 0)
-  }, [voxelDisplay.showWater, voxelGrid, hydroState, voxelIso, hydroParams.fillThreshold])
+    const show = voxelDisplay.showWater || voxelWorkspace === 'shaders'
+    if (!show || !voxelGrid) return null
+    // Heightfield free surface (bed + depth) — continuous sheet, not voxel blocks.
+    if (hydroState.totalWater > 1e-4) {
+      const mesh = buildHeightfieldWaterMesh(
+        hydroState,
+        voxelGrid,
+        voxelIso,
+        hydroParams.fillThreshold,
+        96,
+      )
+      if (mesh) return mesh
+      if (voxelWorkspace !== 'shaders') return null
+    }
+    // Shaders with no rain yet: valley water table for deform / contact demos.
+    if (voxelWorkspace === 'shaders') {
+      return buildValleyWaterSheet(voxelGrid, voxelIso, undefined, 96)
+    }
+    return null
+  }, [
+    voxelDisplay.showWater,
+    voxelWorkspace,
+    voxelGrid,
+    hydroState,
+    voxelIso,
+    hydroParams.fillThreshold,
+  ])
+
+  const fallingDropData = useMemo(() => {
+    const show = voxelDisplay.showWater || voxelWorkspace === 'shaders'
+    if (!show || hydroState.drops.length < 3) return null
+    const drops = collectFallingDrops(hydroState)
+    return drops.length >= 3 ? drops : null
+  }, [voxelDisplay.showWater, voxelWorkspace, hydroState])
 
   const hydroTerrainRef = useRef(voxelGrid)
   const hydroParamsRef = useRef(hydroParams)
@@ -206,15 +254,25 @@ function App() {
   useEffect(() => { hydroParamsRef.current = hydroParams }, [hydroParams])
   useEffect(() => { hydroIsoRef.current = voxelIso }, [voxelIso])
 
+  const snapshotHydro = (state: HydroState): HydroState => ({
+    ...state,
+    depth: state.depth.slice(),
+    drops: state.drops.slice(),
+    totalWater: state.totalWater,
+    steps: state.steps,
+  })
+
   const handleHydroRain = useCallback(() => {
     const grid = hydroTerrainRef.current
     if (!grid) return
     setHydroState((s) => {
       const state = ensureHydroState(s, grid.resolution, grid.extent)
       addRain(state, grid, hydroIsoRef.current, hydroParamsRef.current)
-      stepHydrology(state, grid, hydroIsoRef.current, hydroParamsRef.current)
-      return { ...state, water: state.water, totalWater: state.totalWater, steps: state.steps }
+      return snapshotHydro(state)
     })
+    setHydroFlowing(false)
+    hydroFlowLeftRef.current = 0
+    setHydroFalling(true)
     setVoxelDisplay((d) => (d.showWater ? d : { ...d, showWater: true }))
   }, [])
 
@@ -224,30 +282,103 @@ function App() {
     setHydroState((s) => {
       const state = ensureHydroState(s, grid.resolution, grid.extent)
       stepHydrology(state, grid, hydroIsoRef.current, hydroParamsRef.current)
-      return { ...state, water: state.water, totalWater: state.totalWater, steps: state.steps }
+      return snapshotHydro(state)
     })
   }, [])
 
   const handleHydroReset = useCallback(() => {
-    setHydroState((s) => resetHydro({ ...s, water: s.water }))
+    setHydroState((s) => resetHydro(ensureHydroState(s, s.resolution, s.extent)))
     setHydroRunning(false)
+    setHydroFalling(false)
+    setHydroFlowing(false)
+    hydroFlowLeftRef.current = 0
   }, [])
 
+  // Animate continuous rain particles, then slope-flow into valleys.
   useEffect(() => {
-    if (!hydroRunning || view !== 'voxel') return
+    if (!hydroFalling || hydroRunning || view !== 'voxel') return
     let frameId = 0
     let last = performance.now()
     const tick = (now: number) => {
-      // ~20 Hz so MC rebuilds stay responsive
-      if (now - last >= 50) {
+      if (now - last >= 28) {
+        last = now
+        const grid = hydroTerrainRef.current
+        if (!grid) {
+          setHydroFalling(false)
+          return
+        }
+        let stillFalling = false
+        setHydroState((s) => {
+          const state = ensureHydroState(s, grid.resolution, grid.extent)
+          stillFalling = stepFall(state, grid, hydroIsoRef.current, hydroParamsRef.current)
+          // Start draining as soon as some drops have landed.
+          if (state.depth.some((d) => d > 0)) {
+            stepHydrology(state, grid, hydroIsoRef.current, hydroParamsRef.current, 6)
+          }
+          return snapshotHydro(state)
+        })
+        if (!stillFalling) {
+          setHydroFalling(false)
+          hydroFlowLeftRef.current = POST_LAND_FLOW_TICKS
+          setHydroFlowing(true)
+        }
+      }
+      frameId = requestAnimationFrame(tick)
+    }
+    frameId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frameId)
+  }, [hydroFalling, hydroRunning, view])
+
+  // After landing: keep free-surface gravity flow running so water drains downhill.
+  useEffect(() => {
+    if (!hydroFlowing || hydroFalling || hydroRunning || view !== 'voxel') return
+    let frameId = 0
+    let last = performance.now()
+    const tick = (now: number) => {
+      if (hydroFlowLeftRef.current <= 0) {
+        setHydroFlowing(false)
+        return
+      }
+      if (now - last >= 32) {
         last = now
         const grid = hydroTerrainRef.current
         if (grid) {
           setHydroState((s) => {
             const state = ensureHydroState(s, grid.resolution, grid.extent)
-            addRain(state, grid, hydroIsoRef.current, hydroParamsRef.current)
-            stepHydrology(state, grid, hydroIsoRef.current, hydroParamsRef.current)
-            return { ...state, water: state.water, totalWater: state.totalWater, steps: state.steps }
+            stepHydrology(state, grid, hydroIsoRef.current, hydroParamsRef.current, 16)
+            return snapshotHydro(state)
+          })
+        }
+        hydroFlowLeftRef.current -= 1
+        if (hydroFlowLeftRef.current <= 0) {
+          setHydroFlowing(false)
+          return
+        }
+      }
+      frameId = requestAnimationFrame(tick)
+    }
+    frameId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frameId)
+  }, [hydroFlowing, hydroFalling, hydroRunning, view])
+
+  useEffect(() => {
+    if (!hydroRunning || view !== 'voxel') return
+    let frameId = 0
+    let lastStep = performance.now()
+    let lastRain = performance.now()
+    const tick = (now: number) => {
+      if (now - lastStep >= 28) {
+        lastStep = now
+        const grid = hydroTerrainRef.current
+        if (grid) {
+          const shouldRain = now - lastRain >= 650
+          if (shouldRain) lastRain = now
+          setHydroState((s) => {
+            const state = ensureHydroState(s, grid.resolution, grid.extent)
+            if (shouldRain) addRain(state, grid, hydroIsoRef.current, hydroParamsRef.current)
+            stepFall(state, grid, hydroIsoRef.current, hydroParamsRef.current)
+            stepHydrology(state, grid, hydroIsoRef.current, hydroParamsRef.current, 8)
+            return snapshotHydro(state)
           })
         }
       }
@@ -507,7 +638,9 @@ function App() {
     view === '3d'
       ? 'Visualize · Inspect · Experience'
       : view === 'voxel'
-        ? 'Density · Shapes · Surfaces'
+        ? voxelWorkspace === 'shaders'
+          ? 'Water Shaders · Deform · Contact · Ripple'
+          : 'Density · Hydrology · Surfaces'
         : 'Generate · Simulate · Edit'
 
   // In 2D view, show erosion canvas when simulation sub-tab is active
@@ -538,7 +671,15 @@ function App() {
               mesh={voxelMesh}
               chunks={chunkMeshes}
               waterMesh={waterMeshData}
-              display={voxelDisplay}
+              fallingDrops={fallingDropData}
+              display={
+                voxelWorkspace === 'shaders'
+                  ? { ...voxelDisplay, showWater: true, mode: 'mesh' }
+                  : voxelDisplay
+              }
+              shaderEnabled={voxelWorkspace === 'shaders'}
+              shaderMode={shaderMode}
+              shaderParams={shaderParams}
             />
           )}
           {view === '3d' && (
@@ -568,6 +709,8 @@ function App() {
         </section>
         {view === 'voxel' ? (
           <VoxelPanel
+            workspace={voxelWorkspace}
+            onWorkspaceChange={setVoxelWorkspace}
             params={voxelParams}
             onParamsChange={handleVoxelParamsChange}
             display={voxelDisplay}
@@ -577,11 +720,22 @@ function App() {
             hydro={hydroParams}
             onHydroChange={setHydroParams}
             hydroRunning={hydroRunning}
-            onHydroRunningChange={setHydroRunning}
+            onHydroRunningChange={(running) => {
+              if (running) {
+                setHydroFalling(false)
+                setHydroFlowing(false)
+                hydroFlowLeftRef.current = 0
+              }
+              setHydroRunning(running)
+            }}
             onHydroRain={handleHydroRain}
             onHydroStep={handleHydroStep}
             onHydroReset={handleHydroReset}
             totalWater={hydroState.totalWater}
+            shaderMode={shaderMode}
+            onShaderModeChange={setShaderMode}
+            shaderParams={shaderParams}
+            onShaderParamsChange={setShaderParams}
             stats={voxelStats}
           />
         ) : (

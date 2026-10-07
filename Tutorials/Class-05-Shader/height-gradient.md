@@ -1,4 +1,4 @@
-# Height gradient shading
+﻿# Height gradient shading
 
 ## What
 
@@ -16,12 +16,12 @@ GLSL is optional for this class project; a LUT keeps the pipeline in familiar ca
 
 ## Code pointers
 
-- [`my-react-app/src/lib/heightGradient.ts`](../my-react-app/src/lib/heightGradient.ts)
-- Side panel Color Mode = Height Gradient in [`SidePanel.tsx`](../my-react-app/src/components/SidePanel.tsx)
+- [`my-react-app/src/lib/heightGradient.ts`](../../my-react-app/src/lib/heightGradient.ts)
+- Side panel Color Mode = Height Gradient in [`SidePanel.tsx`](../../my-react-app/src/components/SidePanel.tsx)
 
 ## Screenshot
 
-![3D terrain with height coloring](../Docs/assets/01-3d-terrain.png)
+![3D terrain with height coloring](../../Docs/assets/01-3d-terrain.png)
 
 ## Note for the vault
 

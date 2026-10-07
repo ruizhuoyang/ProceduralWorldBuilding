@@ -1,28 +1,33 @@
 # Tutorials
 
-Beginner-friendly how-tos for running and learning the stack used in this vault.
+Study notes for DESIGN 6197/4197 — work through classes in order.
 
-## Contents
+## Classes
 
-| Note | Topic |
-|------|--------|
-| [REACT-TUTORIAL.md](REACT-TUTORIAL.md) | Install Node, create/run a React + TypeScript Vite app |
-| [THREEJS-RESOURCES.md](THREEJS-RESOURCES.md) | Three.js learning resources |
+| # | Class | What you learn |
+|---|--------|----------------|
+| 01 | [The terminal](Class-01-Terminal/README.md) | `cd`, Node/npm checks, run the app |
+| 02 | [Node, npm, React, TypeScript](Class-02-Node-React-TypeScript/README.md) | Toolchain and React + Three UI |
+| 03 | [Noise / Perlin / fBm](Class-03-Noise/README.md) | Heightmaps and hydraulic erosion |
+| 04 | [Voxel](Class-04-Voxel/README.md) | Density, CSG, Marching Cubes, heightfield hydrology |
+| 05 | [Shader](Class-05-Shader/README.md) | Water GLSL: deform, contact, ripple, particles |
 
-## Important paths
+## How this maps to the app
 
-The runnable class app is:
+| App view | Classes |
+|----------|---------|
+| Terminal / `npm run dev` | 01–02 |
+| **2D Terrain** | 03 |
+| **3D World** | 03 (apply map) + [Project/environment](../Project/environment.md) |
+| **Voxel Terrain → Field** | 04 (density + rain / slope flow) |
+| **Voxel Terrain → Water Shaders** | 05 (GLSL on free-surface water) |
 
-```text
-pwb_class_01/my-react-app/
-```
+## Live site
 
-From PowerShell:
+Firebase Hosting: https://procedural-world-buildin-f602c.web.app
 
-```powershell
-cd C:\Users\ry369\Desktop\pwb_class_01\my-react-app
-npm install
-npm run dev
-```
+## Screenshots
+
+Shared images: [`../Docs/assets/`](../Docs/assets/).
 
 Back to [vault README](../README.md).

@@ -1,4 +1,4 @@
-# Noise and fBm
+﻿# Noise and fBm
 
 ## What
 
@@ -24,14 +24,14 @@ flowchart LR
 
 ## Code pointers
 
-- [`my-react-app/src/lib/noise.ts`](../my-react-app/src/lib/noise.ts) — noise primitives and layer types
-- [`my-react-app/src/lib/generateNoiseTexture.ts`](../my-react-app/src/lib/generateNoiseTexture.ts) — compositing + textures
-- [`my-react-app/src/lib/terrainPresets.ts`](../my-react-app/src/lib/terrainPresets.ts) — calibrated landmass preset
-- UI: 2D Terrain → Layers in [`SidePanel.tsx`](../my-react-app/src/components/SidePanel.tsx)
+- [`my-react-app/src/lib/noise.ts`](../../my-react-app/src/lib/noise.ts) — noise primitives and layer types
+- [`my-react-app/src/lib/generateNoiseTexture.ts`](../../my-react-app/src/lib/generateNoiseTexture.ts) — compositing + textures
+- [`my-react-app/src/lib/terrainPresets.ts`](../../my-react-app/src/lib/terrainPresets.ts) — calibrated landmass preset
+- UI: 2D Terrain → Layers in [`SidePanel.tsx`](../../my-react-app/src/components/SidePanel.tsx)
 
 ## Screenshot
 
-![2D noise terrain](../Docs/assets/02-2d-noise.png)
+![2D noise terrain](../../Docs/assets/02-2d-noise.png)
 
 ## Related
 

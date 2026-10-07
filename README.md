@@ -1,67 +1,63 @@
 # Procedural World Building
 
-**DESIGN 6197/4197 — Fall 2026** · Documentation vault (DOCS 01: Markdown Vault)
+**DESIGN 6197/4197 — Fall 2026** · Study notebook + runnable app
 
-This repository is both a **study notebook** (Obsidian / Markdown) and a runnable **React + Three.js** app under [`my-react-app/`](my-react-app/).
+React + TypeScript + Three.js under [`my-react-app/`](my-react-app/).
 
-Assignment brief: [`markdown.pdf`](markdown.pdf).
+**Live demo:** https://procedural-world-buildin-f602c.web.app
 
 ---
 
 ## Table of contents
 
-1. [Docs](Docs/README.md) — vault conventions, shared assets
-2. [Tutorials](Tutorials/README.md) — React / Three.js how-tos
-3. [Algorithms](Algorithms/README.md) — noise, erosion, CSG, Marching Cubes
-4. [Data structures](Data-structures/README.md) — density grid, chunking
-5. [Shaders](Shaders/README.md) — height gradient shading
-6. [Analysis / Critique](Analysis-Critique/README.md) — reflections and open questions
-7. [Project](Project/README.md) — architecture, atmosphere, Firebase
-8. [Style guides / Design](Style-guides/README.md) — UI style guide
-9. [Runnable app](my-react-app/README.md) — install, dev server, build
+### 1. Tutorials (start here)
 
-### Quick links into research notes
+**→ [Tutorials/README.md](Tutorials/README.md)**
 
-| Theme (course) | Notes |
-|----------------|--------|
-| **Topography** | [Noise & fBm](Algorithms/noise-and-fbm.md), [Hydraulic erosion](Algorithms/hydraulic-erosion.md) |
-| **Atmosphere** | [Environment](Project/environment.md) |
-| **Volumetric form** | [CSG density](Algorithms/csg-density.md), [Marching Cubes](Algorithms/marching-cubes.md) |
-| **Scalable voxels** | [Density grid](Data-structures/density-grid.md), [Chunking](Data-structures/chunking.md) |
-| **Shading** | [Height gradient](Shaders/height-gradient.md) |
-| **Tool UI** | [Style guide](Style-guides/STYLE-GUIDE.md) |
+| Class | Topic | Link |
+|-------|--------|------|
+| **01** | The terminal | [Class-01-Terminal](Tutorials/Class-01-Terminal/README.md) |
+| **02** | Node.js, npm, React, TypeScript | [Class-02-Node-React-TypeScript](Tutorials/Class-02-Node-React-TypeScript/README.md) |
+| **03** | Noise, Perlin / fBm | [Class-03-Noise](Tutorials/Class-03-Noise/README.md) |
+| **04** | Voxel (density, CSG, hydrology) | [Class-04-Voxel](Tutorials/Class-04-Voxel/README.md) |
+| **05** | Shader (water GLSL studies) | [Class-05-Shader](Tutorials/Class-05-Shader/README.md) |
 
----
+### 2. Project notes
 
-## What was built
+| Note | Link |
+|------|------|
+| App architecture | [Project/README.md](Project/README.md) |
+| Atmosphere / weather | [Project/environment.md](Project/environment.md) |
+| Firebase (Auth / Hosting) | [Project/firebase.md](Project/firebase.md) |
 
-A procedural world tool with three views:
+### 3. Other
 
-| View | Focus |
-|------|--------|
-| **3D World** | Height-displaced terrain, fog, time of day / weather / clouds, Firebase save of plane params |
-| **2D Terrain** | Layered noise authoring + hydraulic erosion simulation, live sync to 3D |
-| **Voxel Terrain** | Density shapes, sequential CSG, Marching Cubes, chunked meshes, density debug |
+| Note | Link |
+|------|------|
+| Screenshots | [Docs/assets/](Docs/assets/) |
+| Analysis / critique | [Analysis-Critique/README.md](Analysis-Critique/README.md) |
+| Style guide | [Style-guides/README.md](Style-guides/README.md) |
+| Run the app | [my-react-app/README.md](my-react-app/README.md) |
 
 ---
 
 ## Gallery
 
-![3D World terrain](Docs/assets/01-3d-terrain.png)
+![3D World](Docs/assets/01-3d-terrain.png)
 
-![2D noise heightmap](Docs/assets/02-2d-noise.png)
+![2D noise](Docs/assets/02-2d-noise.png)
 
-![Hydraulic erosion](Docs/assets/03-erosion.png)
+![Erosion](Docs/assets/03-erosion.png)
 
-![Voxel Marching Cubes](Docs/assets/04-voxel-mesh.png)
+![Voxel mesh](Docs/assets/04-voxel-mesh.png)
 
-![Chunk bounds](Docs/assets/05-chunk-bounds.png)
+![Chunks](Docs/assets/05-chunk-bounds.png)
 
-![Environment rain](Docs/assets/06-environment-rain.png)
+![Environment](Docs/assets/06-environment-rain.png)
 
 ---
 
-## How to run the app
+## How to run
 
 ```powershell
 cd my-react-app
@@ -69,22 +65,20 @@ npm install
 npm run dev
 ```
 
-Details: [my-react-app/README.md](my-react-app/README.md) · Firebase: [Project/firebase.md](Project/firebase.md)
+In the app: **Voxel Terrain** → side panel → **Field** | **Water Shaders**  
+- **Field** — Class 04 density + heightfield rain / slope flow  
+- **Water Shaders** — Class 05 deform / contact / ripple / particles  
+
+Deploy: see [Project/firebase.md](Project/firebase.md).
 
 ---
 
-## Vault folder structure
-
-Matches the course tentative structure (filesystem-safe names):
+## Folder structure
 
 ```text
-Docs/
-Tutorials/
-Algorithms/
-Data-structures/
-Shaders/
-Analysis-Critique/
-Project/
-Style-guides/
-my-react-app/          ← implementation (kept at vault root)
+README.md
+Tutorials/          ← Class 01–05 study notes
+Docs/assets/        ← screenshots
+Project/            ← architecture, environment, Firebase
+my-react-app/       ← Vite app (Hosting → dist/)
 ```

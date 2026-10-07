@@ -1,4 +1,4 @@
-# Hydraulic erosion
+﻿# Hydraulic erosion
 
 ## What
 
@@ -26,13 +26,13 @@ Each `stepErosion` simulates `dropletsPerStep` particles with lifetime, friction
 
 ## Code pointers
 
-- [`my-react-app/src/lib/erosion.ts`](../my-react-app/src/lib/erosion.ts)
-- Display: [`ErosionCanvas.tsx`](../my-react-app/src/components/ErosionCanvas.tsx)
-- Loop + live sync: [`App.tsx`](../my-react-app/src/App.tsx)
+- [`my-react-app/src/lib/erosion.ts`](../../my-react-app/src/lib/erosion.ts)
+- Display: [`ErosionCanvas.tsx`](../../my-react-app/src/components/ErosionCanvas.tsx)
+- Loop + live sync: [`App.tsx`](../../my-react-app/src/App.tsx)
 
 ## Screenshot
 
-![Erosion simulation](../Docs/assets/03-erosion.png)
+![Erosion simulation](../../Docs/assets/03-erosion.png)
 
 ## Limitations (notebook)
 

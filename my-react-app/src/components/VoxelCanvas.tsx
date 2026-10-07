@@ -4,6 +4,13 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { gridSpacing, gridToWorld, type DensityGrid } from '../lib/voxel/densityGrid'
 import type { ChunkMesh } from '../lib/voxel/chunks'
 import type { MeshData } from '../lib/voxel/marchingCubes'
+import { createWaterMaterial, MAX_RIPPLES, syncWaterUniforms } from '../lib/shaders/waterMaterial'
+import { buildTerrainHeightTexture } from '../lib/shaders/terrainHeightTexture'
+import {
+  createDefaultShaderParams,
+  type ShaderStudyMode,
+  type ShaderStudyParams,
+} from '../lib/shaders/types'
 import './ThreeCanvas.css'
 
 export type VoxelViewMode = 'mesh' | 'debug'
@@ -40,7 +47,13 @@ type VoxelCanvasProps = {
   chunks: ChunkMesh[] | null
   /** Water volume Marching Cubes mesh. */
   waterMesh: MeshData | null
+  /** Mid-air rain drops as xyz triplets (small particles). */
+  fallingDrops: Float32Array | null
   display: VoxelDisplay
+  /** When true, Class 05 water shaders run on the voxel water MC mesh. */
+  shaderEnabled?: boolean
+  shaderMode?: ShaderStudyMode
+  shaderParams?: ShaderStudyParams
 }
 
 type ChunkObject = THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>
@@ -57,7 +70,19 @@ type SceneObjects = {
   /** Persistent per chunk key; only the geometry is swapped on rebuild. */
   chunkMeshes: Map<string, ChunkObject>
   chunkBoxes: THREE.Group
-  waterMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>
+  waterMesh: THREE.Mesh<THREE.BufferGeometry, THREE.Material>
+  waterStandard: THREE.MeshStandardMaterial
+  waterShader: THREE.ShaderMaterial
+  rainDrops: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>
+  heightMap: THREE.DataTexture | null
+  ripples: THREE.Vector4[]
+  rippleCursor: number
+  clock: THREE.Clock
+  raycaster: THREE.Raycaster
+  pointer: THREE.Vector2
+  renderer: THREE.WebGLRenderer
+  camera: THREE.PerspectiveCamera
+  controls: OrbitControls
 }
 
 const EMPTY_COLOR = new THREE.Color(0x14305e)
@@ -70,9 +95,26 @@ const WATER_COLOR = 0x3a8fd4
 const CHUNK_BOX_COLOR = 0xf2c14e
 const EMPTY_CHUNK_BOX_COLOR = 0x3a3f4b
 
-export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chunks, waterMesh, display }: VoxelCanvasProps) {
+export default function VoxelCanvas({
+  grid,
+  extent,
+  isoLevel,
+  surface,
+  mesh,
+  chunks,
+  waterMesh,
+  fallingDrops,
+  display,
+  shaderEnabled = false,
+  shaderMode = 'deform',
+  shaderParams = createDefaultShaderParams(),
+}: VoxelCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const objectsRef = useRef<SceneObjects | null>(null)
+  const shaderRef = useRef({ enabled: false, mode: shaderMode, params: shaderParams, extent })
+  useEffect(() => {
+    shaderRef.current = { enabled: shaderEnabled, mode: shaderMode, params: shaderParams, extent }
+  }, [shaderEnabled, shaderMode, shaderParams, extent])
 
   // ── Scene setup (once) ──
   useEffect(() => {
@@ -92,6 +134,8 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
 
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
+    controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE
+    controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.55))
     const sun = new THREE.DirectionalLight(0xffffff, 1.1)
@@ -101,7 +145,6 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
     const floor = new THREE.GridHelper(20, 20, 0x3a3f4b, 0x1e2228)
     scene.add(floor)
 
-    // Created once; only their geometry is swapped when the field changes.
     const surfaceMesh = new THREE.Mesh(
       new THREE.BufferGeometry(),
       new THREE.MeshStandardMaterial({
@@ -119,26 +162,48 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
     )
     scene.add(surfaceMesh, surfaceWire)
 
-    const waterSurface = new THREE.Mesh(
+    const waterStandard = new THREE.MeshStandardMaterial({
+      color: WATER_COLOR,
+      roughness: 0.28,
+      metalness: 0.08,
+      transparent: true,
+      opacity: 0.62,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -2,
+      side: THREE.DoubleSide,
+    })
+    const waterShader = createWaterMaterial(createDefaultShaderParams(), 'deform')
+    const waterSurface: THREE.Mesh<THREE.BufferGeometry, THREE.Material> = new THREE.Mesh(
       new THREE.BufferGeometry(),
-      new THREE.MeshStandardMaterial({
-        color: WATER_COLOR,
-        roughness: 0.35,
-        metalness: 0.05,
-        transparent: true,
-        opacity: 0.55,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }),
+      waterStandard,
     )
     waterSurface.visible = false
     scene.add(waterSurface)
+
+    const rainDrops = new THREE.Points(
+      new THREE.BufferGeometry(),
+      new THREE.PointsMaterial({
+        color: 0xc5e4f5,
+        size: 0.028,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0.7,
+        depthWrite: false,
+      }),
+    )
+    rainDrops.visible = false
+    rainDrops.frustumCulled = false
+    scene.add(rainDrops)
 
     const content = new THREE.Group()
     const chunkGroup = new THREE.Group()
     const chunkBoxes = new THREE.Group()
     scene.add(content, chunkGroup, chunkBoxes)
-    objectsRef.current = {
+
+    const ripples = Array.from({ length: MAX_RIPPLES }, () => new THREE.Vector4(0, 0, 0, 0))
+    const bag: SceneObjects = {
       content,
       floor,
       surfaceMesh,
@@ -150,11 +215,59 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
       chunkMeshes: new Map(),
       chunkBoxes,
       waterMesh: waterSurface,
+      waterStandard,
+      waterShader,
+      rainDrops,
+      heightMap: null,
+      ripples,
+      rippleCursor: 0,
+      clock: new THREE.Clock(),
+      raycaster: new THREE.Raycaster(),
+      pointer: new THREE.Vector2(),
+      renderer,
+      camera,
+      controls,
     }
+    objectsRef.current = bag
+
+    let downX = 0
+    let downY = 0
+    const onPointerDown = (e: PointerEvent) => {
+      downX = e.clientX
+      downY = e.clientY
+    }
+    const onPointerUp = (e: PointerEvent) => {
+      if (!shaderRef.current.enabled || shaderRef.current.mode !== 'ripple') return
+      if (Math.hypot(e.clientX - downX, e.clientY - downY) > 6) return
+      const rect = renderer.domElement.getBoundingClientRect()
+      bag.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+      bag.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+      bag.raycaster.setFromCamera(bag.pointer, camera)
+      const hits = bag.raycaster.intersectObject(waterSurface, false)
+      if (!hits.length) return
+      const p = hits[0].point
+      const slot = bag.ripples[bag.rippleCursor % MAX_RIPPLES]
+      slot.set(p.x, p.z, bag.clock.getElapsedTime(), 1)
+      bag.rippleCursor++
+    }
+    renderer.domElement.addEventListener('pointerdown', onPointerDown)
+    renderer.domElement.addEventListener('pointerup', onPointerUp)
 
     let frameId = 0
     const animate = () => {
       frameId = requestAnimationFrame(animate)
+      const s = shaderRef.current
+      const t = bag.clock.getElapsedTime()
+      if (s.enabled) {
+        waterSurface.material = waterShader
+        syncWaterUniforms(waterShader, s.params, s.mode, t, bag.ripples, undefined, bag.heightMap, s.extent)
+        controls.mouseButtons.LEFT = s.mode === 'ripple' ? (-1 as THREE.MOUSE) : THREE.MOUSE.ROTATE
+        renderer.domElement.style.cursor = s.mode === 'ripple' ? 'crosshair' : 'default'
+      } else {
+        waterSurface.material = waterStandard
+        controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE
+        renderer.domElement.style.cursor = 'default'
+      }
       controls.update()
       renderer.render(scene, camera)
     }
@@ -172,18 +285,24 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
     return () => {
       cancelAnimationFrame(frameId)
       ro.disconnect()
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown)
+      renderer.domElement.removeEventListener('pointerup', onPointerUp)
       controls.dispose()
       disposeContent(objectsRef.current)
       if (objectsRef.current) {
         syncChunkMeshes(objectsRef.current, [])
         clearChunkBoxes(objectsRef.current)
+        objectsRef.current.heightMap?.dispose()
       }
       objectsRef.current = null
       surfaceMesh.geometry.dispose()
       surfaceMesh.material.dispose()
       surfaceWire.material.dispose()
       waterSurface.geometry.dispose()
-      waterSurface.material.dispose()
+      waterStandard.dispose()
+      waterShader.dispose()
+      rainDrops.geometry.dispose()
+      rainDrops.material.dispose()
       floor.dispose()
       renderer.dispose()
       container.removeChild(renderer.domElement)
@@ -234,6 +353,21 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
     objects.waterMesh.visible = display.showWater
   }, [waterMesh, display.showWater])
 
+  // ── Falling rain particles (tiny points) ──
+  useEffect(() => {
+    const objects = objectsRef.current
+    if (!objects) return
+    if (!fallingDrops || fallingDrops.length < 3 || !display.showWater) {
+      objects.rainDrops.visible = false
+      return
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(fallingDrops, 3))
+    objects.rainDrops.geometry.dispose()
+    objects.rainDrops.geometry = geometry
+    objects.rainDrops.visible = true
+  }, [fallingDrops, display.showWater])
+
   // ── Debug visualization + bounds: rebuilt when the field changes ──
   useEffect(() => {
     const objects = objectsRef.current
@@ -249,6 +383,9 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
     )
     objects.content.add(bounds)
     objects.bounds = bounds
+
+    objects.heightMap?.dispose()
+    objects.heightMap = grid ? buildTerrainHeightTexture(grid, isoLevel) : null
 
     if (!surface || !grid) return
     const voxels = buildSurfaceVoxels(grid, surface)
@@ -274,7 +411,9 @@ export default function VoxelCanvas({ grid, extent, isoLevel, surface, mesh, chu
     objects.chunkBoxes.visible = showChunks && display.chunkBounds
     styleChunkMeshes(objects, display)
     objects.waterMesh.visible = display.showWater && waterMesh !== null && waterMesh.indices.length > 0
-  }, [display, grid, isoLevel, surface, mesh, chunks, waterMesh])
+    objects.rainDrops.visible =
+      display.showWater && fallingDrops !== null && fallingDrops.length >= 3
+  }, [display, grid, isoLevel, surface, mesh, chunks, waterMesh, fallingDrops])
 
   return <div ref={containerRef} className="three-canvas" aria-label="Voxel density field" />
 }

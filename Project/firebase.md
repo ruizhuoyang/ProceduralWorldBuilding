@@ -186,7 +186,9 @@ firebase deploy --only hosting
 firebase deploy --only firestore:rules
 ```
 
-After a successful deploy, the CLI prints your **Hosting URL** (e.g. `https://procedural-world-buildin-f602c.web.app`).
+After a successful deploy, the CLI prints your **Hosting URL**.
+
+**This project:** https://procedural-world-buildin-f602c.web.app
 
 ---
 

@@ -30,7 +30,7 @@ export const DEFAULT_ENVIRONMENT: EnvironmentParams = {
   sunAzimuth: 35,
   sunIntensity: 1,
   weather: 'clear',
-  clouds: true,
+  clouds: false,
   cloudCover: 0.2,
 }
 

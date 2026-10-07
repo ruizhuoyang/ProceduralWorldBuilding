@@ -1,4 +1,4 @@
-# Marching Cubes
+﻿# Marching Cubes
 
 ## What
 
@@ -25,15 +25,15 @@ flowchart LR
 
 ## Code pointers
 
-- [`my-react-app/src/lib/voxel/marchingCubes.ts`](../my-react-app/src/lib/voxel/marchingCubes.ts) — `marchingCubes`, `marchRegion`
-- UI: Iso Level + MC Mesh / Density Debug in [`VoxelPanel.tsx`](../my-react-app/src/components/VoxelPanel.tsx)
-- Render: [`VoxelCanvas.tsx`](../my-react-app/src/components/VoxelCanvas.tsx)
+- [`my-react-app/src/lib/voxel/marchingCubes.ts`](../../my-react-app/src/lib/voxel/marchingCubes.ts) — `marchingCubes`, `marchRegion`
+- UI: Iso Level + MC Mesh / Density Debug in [`VoxelPanel.tsx`](../../my-react-app/src/components/VoxelPanel.tsx)
+- Render: [`VoxelCanvas.tsx`](../../my-react-app/src/components/VoxelCanvas.tsx)
 
 ## Screenshot
 
-![Marching Cubes mesh](../Docs/assets/04-voxel-mesh.png)
+![Marching Cubes mesh](../../Docs/assets/04-voxel-mesh.png)
 
 ## Related
 
-- [Chunking](../Data-structures/chunking.md) — per-chunk `meshChunk`
+- [Chunking](chunking.md) — per-chunk `meshChunk`
 - [Density CSG](csg-density.md)

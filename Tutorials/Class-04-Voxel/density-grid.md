@@ -1,4 +1,4 @@
-# Density grid
+﻿# Density grid
 
 ## What
 
@@ -16,10 +16,10 @@ A uniform lattice is the simplest shared substrate for filling shapes, CSG, surf
 
 ## Code pointers
 
-- [`my-react-app/src/lib/voxel/densityGrid.ts`](../my-react-app/src/lib/voxel/densityGrid.ts)
-- Built by [`voxelField.ts`](../my-react-app/src/lib/voxel/voxelField.ts) `buildVoxelGrid`
+- [`my-react-app/src/lib/voxel/densityGrid.ts`](../../my-react-app/src/lib/voxel/densityGrid.ts)
+- Built by [`voxelField.ts`](../../my-react-app/src/lib/voxel/voxelField.ts) `buildVoxelGrid`
 
 ## Related
 
 - [Chunking](chunking.md) — partitions cells of this lattice
-- [Density CSG](../Algorithms/csg-density.md)
+- [Density CSG](../Class-03-Noise/csg-density.md)
