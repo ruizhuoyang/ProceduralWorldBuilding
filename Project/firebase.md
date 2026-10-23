@@ -1,6 +1,6 @@
 # Firebase (Auth, Firestore, Hosting)
 
-Study / project note merging the short setup checklist with the full deployment guide.
+Course-app Hosting, Google Auth, and Firestore. **Data Fossil** is a separate Hosting site on the same Firebase project — see [data-fossil/README.md](../data-fossil/README.md#deploy). Do not deploy Data Fossil from `my-react-app/`.
 
 ## Quick setup checklist
 

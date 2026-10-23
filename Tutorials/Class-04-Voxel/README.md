@@ -1,4 +1,4 @@
-﻿# Class 04 — Voxel (pixels / voxels)
+# Class 04 — Voxel (pixels / voxels)
 
 **Status:** solid · **Area:** volumetric form
 
@@ -30,9 +30,9 @@ Class 04 moves from 2D heightmaps to **volumetric** form. Voxels give real valle
 
 ## Screenshots
 
-![Voxel Marching Cubes mesh](../../Docs/assets/04-voxel-mesh.png)
+### Voxel Terrain — Marching Cubes mesh
 
-![Chunk bounds](../../Docs/assets/05-chunk-bounds.png)
+![Voxel Marching Cubes mesh](../../Docs/assets/04-voxel-mesh.png)
 
 ## Key terms
 
@@ -50,5 +50,6 @@ Class 04 moves from 2D heightmaps to **volumetric** form. Voxels give real valle
 - Previous: [Class 03 — Noise](../Class-03-Noise/README.md)
 - Next: [Class 05 — Shader](../Class-05-Shader/README.md)
 - App: [`VoxelPanel.tsx`](../../my-react-app/src/components/VoxelPanel.tsx), [`hydrology.ts`](../../my-react-app/src/lib/voxel/hydrology.ts)
+- Final project (3D noise field as stone skin, not density carve): [Data Fossil](../../data-fossil/README.md)
 
 Back to [Tutorials](../README.md)

@@ -38,11 +38,11 @@ export const DEFAULT_HEIGHTFIELD_TERRAIN: HeightfieldTerrainParams = {
 export function generateVoxelHeightfield(params: HeightfieldTerrainParams): Float32Array {
   const layers = [
     createLayer({
-      name: 'Voxel Landmass',
+      name: 'Voxel Layer',
       blendMode: 'add',
       params: {
         ...DEFAULT_NOISE_PARAMS,
-        type: 'fbm',
+        type: 'perlin',
         scale: params.noiseScale,
         octaves: params.octaves,
         persistence: 0.5,

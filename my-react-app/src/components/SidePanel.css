@@ -481,7 +481,7 @@
   outline-offset: 1px;
 }
 
-/* ── Sub-tabs (Noise / Simulation) ── */
+/* ── Sub-tabs (2D Noise / Simulation, 3D Class 06, terrain source) ── */
 
 .sub-tabs {
   display: flex;
@@ -489,6 +489,25 @@
   border: 1px solid var(--border);
   border-radius: 2px;
   overflow: hidden;
+}
+
+.sub-tabs--world {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin: 0.25rem 0 0.75rem;
+  background: var(--panel-bg);
+  /* Single row: Terrain → Scatter → Splines → Particles — always all visible. */
+  display: flex;
+  flex-shrink: 0;
+}
+
+.sub-tabs--world .sub-tabs__button {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 0.5625rem;
+  letter-spacing: 0.01em;
+  padding: 0 0.15rem;
 }
 
 .sub-tabs__button {

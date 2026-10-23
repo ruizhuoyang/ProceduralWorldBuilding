@@ -7,27 +7,33 @@ Notes about the procedural world application: architecture, atmosphere, and depl
 | Note | Topic |
 |------|--------|
 | [README.md](README.md) | This overview |
-| [environment.md](environment.md) | Time of day, sun, weather, clouds |
+| [environment.md](environment.md) | Time of day, sun, day cycle |
 | [firebase.md](firebase.md) | Auth, Firestore, Hosting |
 
-## Live site
+## Live sites
 
-https://procedural-world-buildin-f602c.web.app
+| App | URL |
+|-----|-----|
+| Course world | https://procedural-world-buildin-f602c.web.app |
+| Data Fossil | https://pwb-data-fossil.web.app |
 
 ## Runnable app
 
-- [../my-react-app/](../my-react-app/) — Vite + React 19 + TypeScript + Three.js
-- Run guide: [../my-react-app/README.md](../my-react-app/README.md)
+- [../my-react-app/](../my-react-app/) — Vite + React 19 + TypeScript + Three.js ([run](../my-react-app/README.md), [deploy](firebase.md))
+- [../data-fossil/](../data-fossil/) — final project, digits → unique rock ([README](../data-fossil/README.md#deploy))
 
 ## Architecture (high level)
 
 ```mermaid
 flowchart LR
-  Noise[2D Noise layers] --> Height[Heightfield]
+  Noise[2D Noise equation + shaping] --> Height[Heightfield]
   Height --> Erosion[Hydraulic erosion]
   Erosion --> Three[3D World plane]
   Height --> Three
-  Env[Environment params] --> Three
+  Scatter[Scatter InstancedMesh] --> Three
+  Spline[Splines ribbon + influence] --> Three
+  Particles[Weather particles + field] --> Three
+  Env[Environment sun / day] --> Three
   Ops[Voxel CSG / heightfield] --> Grid[Density grid / chunks]
   Grid --> MC[Marching Cubes terrain]
   Grid --> Hydro[Column depth hydrology]
@@ -41,13 +47,15 @@ flowchart LR
 
 | View | Role |
 |------|------|
-| **3D World** | Displaced plane, fog, environment |
+| **3D World** | Displaced plane; Class 06 tabs; Environment + Camera |
 | **2D Terrain** | Noise layers + erosion simulation |
 | **Voxel Terrain → Field** | Density, CSG, MC, rain / slope flow |
 | **Voxel Terrain → Water Shaders** | Deform / contact / ripple / particles |
 
 ## Screenshot
 
-![3D World with terrain](../Docs/assets/01-3d-terrain.png)
+### 3D World — Terrain + distributions
+
+![3D World with terrain, scatter, splines](../Docs/assets/01-3d-terrain.png)
 
 Back to [vault README](../README.md).

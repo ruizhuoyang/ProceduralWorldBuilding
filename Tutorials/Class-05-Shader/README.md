@@ -1,4 +1,4 @@
-﻿# Class 05 — Shader (mesh deformation)
+# Class 05 — Shader (mesh deformation)
 
 **Status:** learning · **Area:** shading / water
 
@@ -36,7 +36,7 @@ Class 05 (*PCG 03: Shaders*) asks for swappable shader studies. They share the v
 
 ## Screenshot
 
-![Environment / water mood](../../Docs/assets/06-environment-rain.png)
+![Voxel Terrain (water shaders share this view)](../../Docs/assets/04-voxel-mesh.png)
 
 ## Key terms
 
@@ -51,7 +51,9 @@ Class 05 (*PCG 03: Shaders*) asks for swappable shader studies. They share the v
 ## Related
 
 - Previous: [Class 04 — Voxel](../Class-04-Voxel/README.md)
+- Next: [Class 06 — Distributions](../Class-06-Distributions/README.md)
 - Hydrology sheet: [voxel-hydrology.md](../Class-04-Voxel/voxel-hydrology.md)
 - Code: [`waterMaterial.ts`](../../my-react-app/src/lib/shaders/waterMaterial.ts), [`terrainHeightTexture.ts`](../../my-react-app/src/lib/shaders/terrainHeightTexture.ts), [`demoWaterSheet.ts`](../../my-react-app/src/lib/shaders/demoWaterSheet.ts), [`VoxelCanvas.tsx`](../../my-react-app/src/components/VoxelCanvas.tsx)
+- Final project (height-tint LUT + fragment 3D noise): [Data Fossil](../../data-fossil/README.md)
 
 Back to [Tutorials](../README.md)

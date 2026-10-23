@@ -1,5 +1,4 @@
 import {
-  applyShaping,
   blendValues,
   colorForValue,
   createNoiseSampler,
@@ -78,7 +77,7 @@ type ActiveLayer = { layer: NoiseLayer; sampler: NoiseSampler }
 export function prepareLayers(layers: NoiseLayer[]): ActiveLayer[] {
   return layers
     .filter((l) => l.visible)
-    .map((layer) => ({ layer, sampler: createNoiseSampler(layer.params) }))
+    .map((layer) => ({ layer, sampler: createNoiseSampler(layer.params, layer.shaping) }))
 }
 
 /** Composites layers at map coordinates `(u, v)`, where one map width = 1. */
@@ -87,8 +86,7 @@ export function compositeLayers(active: ActiveLayer[], u: number, v: number): nu
   let first = true
 
   for (const { layer, sampler } of active) {
-    let value = sampler.sample(u * layer.params.scale, v * layer.params.scale)
-    value = applyShaping(value, layer.shaping)
+    const value = sampler.sample(u * layer.params.scale, v * layer.params.scale)
 
     if (first) {
       result = value * layer.opacity

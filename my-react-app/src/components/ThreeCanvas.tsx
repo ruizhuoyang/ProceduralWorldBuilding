@@ -3,6 +3,31 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { DAY_CYCLE_HOURS_PER_SECOND, type EnvironmentParams } from '../lib/environment'
 import { createEnvironmentScene } from '../lib/environmentScene'
+import { createPlantMaterial, getPlantGeometry } from '../lib/scatter/plantMeshes'
+import { scatterLayerInstances } from '../lib/scatter/scatterPlants'
+import type { ScatterLayer } from '../lib/scatter/types'
+import { createWeatherParticleMaterial } from '../lib/particles/material'
+import {
+  createWeatherParticleSystem,
+  rebuildField,
+  stepWeatherParticles,
+  writeFieldArrows,
+  writeTrailLinePositions,
+  type WeatherParticleSystem,
+} from '../lib/particles/system'
+import {
+  DEFAULT_PARTICLE_WEATHER,
+  type ParticleWeatherParams,
+} from '../lib/particles/types'
+import { collectAvoidPaths } from '../lib/spline/influence'
+import {
+  buildRibbonGeometry,
+  createCenterlineMaterial,
+  createRibbonMaterial,
+  projectControlMarkers,
+  projectSplinePath,
+} from '../lib/spline/ribbon'
+import type { SplinePCGParams } from '../lib/spline/types'
 import './ThreeCanvas.css'
 
 /** How often the playing day cycle reports its time back to the UI. */
@@ -43,9 +68,27 @@ type ThreeCanvasProps = {
   /** Raw 0..1 square heightfield; its size is derived from the array length. */
   heightfield: Float32Array | null
   environment: EnvironmentParams
+  /** Class 06 plant scatter layers (InstancedMesh on the heightfield). */
+  scatterLayers?: ScatterLayer[]
+  /** Class 06 PCG splines (Bevy-style convert / count / meander). */
+  splinePCG?: SplinePCGParams | null
+  /** Class 06 weather particles + vector field. */
+  particleWeather?: ParticleWeatherParams
   /** Called (throttled) while the day cycle advances the time. */
   onTimeOfDayChange: (hours: number) => void
   ref?: Ref<ThreeCanvasHandle>
+}
+
+type WeatherRuntime = {
+  sys: WeatherParticleSystem
+  points: THREE.Points
+  pointMat: THREE.ShaderMaterial
+  trails: THREE.LineSegments
+  fieldLines: THREE.LineSegments
+  trailBuf: Float32Array
+  fieldBuf: Float32Array
+  key: string
+  fieldKey: string
 }
 
 export default function ThreeCanvas({
@@ -54,13 +97,25 @@ export default function ThreeCanvas({
   colorMap,
   heightfield,
   environment,
+  scatterLayers = [],
+  splinePCG = null,
+  particleWeather = DEFAULT_PARTICLE_WEATHER,
   onTimeOfDayChange,
   ref,
 }: ThreeCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const controlsRef = useRef<OrbitControls | null>(null)
+  const scatterGroupRef = useRef<THREE.Group | null>(null)
+  const splineGroupRef = useRef<THREE.Group | null>(null)
+  const plantMaterialRef = useRef<THREE.MeshStandardMaterial | null>(null)
+  const weatherRuntimeRef = useRef<WeatherRuntime | null>(null)
+  const particleWeatherRef = useRef(particleWeather)
   const viewportRef = useRef(viewport)
+
+  useEffect(() => {
+    particleWeatherRef.current = particleWeather
+  }, [particleWeather])
 
   useEffect(() => {
     viewportRef.current = viewport
@@ -97,7 +152,7 @@ export default function ThreeCanvas({
   const heightfieldRef = useRef(heightfield)
 
   // Track versions to detect changes inside the animation loop.
-  const segmentsRef = useRef(sceneParams.planeSegments)
+  // dispScaleRef is only advanced inside animate after applyHeightfield().
   const dispScaleRef = useRef(sceneParams.displacementScale)
   const fogEnabledRef = useRef(sceneParams.fog)
   const mapVersionRef = useRef(0)
@@ -206,6 +261,116 @@ export default function ThreeCanvas({
     const wire = new THREE.Mesh(geometry, wireMaterial)
     wire.rotation.x = -Math.PI / 2
     scene.add(wire)
+
+    const scatterGroup = new THREE.Group()
+    scatterGroup.name = 'plant-scatter'
+    scene.add(scatterGroup)
+    scatterGroupRef.current = scatterGroup
+    const plantMaterial = createPlantMaterial()
+    plantMaterialRef.current = plantMaterial
+
+    const splineGroup = new THREE.Group()
+    splineGroup.name = 'spline-overlays'
+    scene.add(splineGroup)
+    splineGroupRef.current = splineGroup
+
+    // Class 06 A3 — weather particles (soft points + trails + field debug)
+    const weatherGroup = new THREE.Group()
+    weatherGroup.name = 'weather-particles'
+    scene.add(weatherGroup)
+
+    const fieldKeyOf = (params: ParticleWeatherParams, hf: Float32Array | null) =>
+      `${params.fieldMode}|${params.windX}|${params.windZ}|${hf ? hf.length : 0}|${mapVersionRef.current}`
+
+    const ensureWeather = (params: ParticleWeatherParams, hf: Float32Array | null) => {
+      const key = `${params.count}|${params.trailLength}|${params.phenomenon}`
+      const existing = weatherRuntimeRef.current
+      if (existing && existing.key === key) {
+        const fk = fieldKeyOf(params, hf)
+        if (existing.fieldKey !== fk) {
+          rebuildField(existing.sys, params, hf)
+          existing.fieldKey = fk
+        }
+        existing.pointMat.uniforms.uSize.value = params.size
+        existing.pointMat.uniforms.uColor.value.setRGB(...existing.sys.color)
+        return existing
+      }
+      if (existing) {
+        weatherGroup.remove(existing.points, existing.trails, existing.fieldLines)
+        existing.points.geometry.dispose()
+        existing.trails.geometry.dispose()
+        existing.fieldLines.geometry.dispose()
+        existing.pointMat.dispose()
+        ;(existing.trails.material as THREE.Material).dispose()
+        ;(existing.fieldLines.material as THREE.Material).dispose()
+      }
+
+      const sys = createWeatherParticleSystem(params, hf)
+      const posAttr = new THREE.BufferAttribute(sys.positions, 3)
+      posAttr.setUsage(THREE.DynamicDrawUsage)
+      const lifeAttr = new THREE.BufferAttribute(sys.life, 1)
+      lifeAttr.setUsage(THREE.DynamicDrawUsage)
+      const maxLifeAttr = new THREE.BufferAttribute(sys.maxLife, 1)
+      maxLifeAttr.setUsage(THREE.DynamicDrawUsage)
+      const pGeo = new THREE.BufferGeometry()
+      pGeo.setAttribute('position', posAttr)
+      pGeo.setAttribute('aLife', lifeAttr)
+      pGeo.setAttribute('aMaxLife', maxLifeAttr)
+      const pointMat = createWeatherParticleMaterial(params.size, sys.color)
+      const points = new THREE.Points(pGeo, pointMat)
+      points.frustumCulled = false
+      points.visible = false
+
+      const maxTrailVerts = sys.count * (sys.trailLen - 1) * 2
+      const trailBuf = new Float32Array(maxTrailVerts * 3)
+      const tGeo = new THREE.BufferGeometry()
+      const tAttr = new THREE.BufferAttribute(trailBuf, 3)
+      tAttr.setUsage(THREE.DynamicDrawUsage)
+      tGeo.setAttribute('position', tAttr)
+      tGeo.setDrawRange(0, 0)
+      const trails = new THREE.LineSegments(
+        tGeo,
+        new THREE.LineBasicMaterial({
+          color: 0x9ab4c8,
+          transparent: true,
+          opacity: 0.2,
+          depthWrite: false,
+        }),
+      )
+      trails.frustumCulled = false
+      trails.visible = false
+
+      const fieldBuf = new Float32Array(16 * 16 * 2 * 3)
+      const fGeo = new THREE.BufferGeometry()
+      const fAttr = new THREE.BufferAttribute(fieldBuf, 3)
+      fAttr.setUsage(THREE.DynamicDrawUsage)
+      fGeo.setAttribute('position', fAttr)
+      fGeo.setDrawRange(0, 0)
+      const fieldLines = new THREE.LineSegments(
+        fGeo,
+        new THREE.LineBasicMaterial({ color: 0xffcc66, transparent: true, opacity: 0.55 }),
+      )
+      fieldLines.frustumCulled = false
+      fieldLines.visible = false
+
+      weatherGroup.add(points, trails, fieldLines)
+      const runtime: WeatherRuntime = {
+        sys,
+        points,
+        pointMat,
+        trails,
+        fieldLines,
+        trailBuf,
+        fieldBuf,
+        key,
+        fieldKey: fieldKeyOf(params, hf),
+      }
+      weatherRuntimeRef.current = runtime
+      return runtime
+    }
+
+    // Seed once so animate always has a runtime handle
+    ensureWeather(particleWeatherRef.current, heightfieldRef.current)
 
     let colorTexture: THREE.CanvasTexture | null = null
     let currentMapVersion = -1
@@ -324,6 +489,44 @@ export default function ThreeCanvas({
       axes.visible = vp.axes
       grid.visible = vp.grid
 
+      // Class 06 A3 weather particles
+      const wp = particleWeatherRef.current
+      const weather = ensureWeather(wp, heightfieldRef.current)
+      weather.points.visible = wp.enabled
+      weather.trails.visible = wp.enabled && wp.showTrails
+      weather.fieldLines.visible = wp.enabled && wp.showField
+      if (wp.enabled) {
+        weather.pointMat.uniforms.uSize.value = wp.size
+        weather.pointMat.uniforms.uColor.value.setRGB(...weather.sys.color)
+        stepWeatherParticles(
+          weather.sys,
+          wp,
+          heightfieldRef.current,
+          sceneRef.current.displacementScale,
+          dt,
+        )
+        const pos = weather.points.geometry.getAttribute('position') as THREE.BufferAttribute
+        const life = weather.points.geometry.getAttribute('aLife') as THREE.BufferAttribute
+        const maxLife = weather.points.geometry.getAttribute('aMaxLife') as THREE.BufferAttribute
+        pos.needsUpdate = true
+        life.needsUpdate = true
+        maxLife.needsUpdate = true
+
+        if (wp.showTrails) {
+          const nVerts = writeTrailLinePositions(weather.sys, weather.trailBuf)
+          const tPos = weather.trails.geometry.getAttribute('position') as THREE.BufferAttribute
+          tPos.needsUpdate = true
+          weather.trails.geometry.setDrawRange(0, nVerts)
+          ;(weather.trails.material as THREE.LineBasicMaterial).color.setRGB(...weather.sys.color)
+        }
+        if (wp.showField) {
+          const nVerts = writeFieldArrows(weather.sys.field, 0.15, weather.fieldBuf)
+          const fPos = weather.fieldLines.geometry.getAttribute('position') as THREE.BufferAttribute
+          fPos.needsUpdate = true
+          weather.fieldLines.geometry.setDrawRange(0, nVerts)
+        }
+      }
+
       controls.update()
       renderer.render(scene, camera)
     }
@@ -347,6 +550,22 @@ export default function ThreeCanvas({
       controls.dispose()
       cameraRef.current = null
       controlsRef.current = null
+      scatterGroupRef.current = null
+      splineGroupRef.current = null
+      const wr = weatherRuntimeRef.current
+      if (wr) {
+        wr.points.geometry.dispose()
+        wr.trails.geometry.dispose()
+        wr.fieldLines.geometry.dispose()
+        wr.pointMat.dispose()
+        ;(wr.trails.material as THREE.Material).dispose()
+        ;(wr.fieldLines.material as THREE.Material).dispose()
+        weatherRuntimeRef.current = null
+      }
+      clearScatterGroup(scatterGroup)
+      clearSplineGroup(splineGroup)
+      plantMaterial.dispose()
+      plantMaterialRef.current = null
       environmentScene.dispose()
       geometry.dispose()
       material.dispose()
@@ -358,25 +577,110 @@ export default function ThreeCanvas({
     }
   }, [])
 
+  // Rebuild plant instances whenever layers, terrain, or spline bans change.
+  useEffect(() => {
+    const group = scatterGroupRef.current
+    const material = plantMaterialRef.current
+    if (!group || !material) return
+
+    const avoid = collectAvoidPaths(splinePCG, heightfield, sceneParams.displacementScale)
+    clearScatterGroup(group)
+    for (const layer of scatterLayers) {
+      const batch = scatterLayerInstances(
+        layer,
+        heightfield,
+        sceneParams.displacementScale,
+        avoid,
+      )
+      if (batch.matrices.length === 0) continue
+      const geo = getPlantGeometry(batch.plant)
+      const mesh = new THREE.InstancedMesh(geo, material, batch.matrices.length)
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+      mesh.castShadow = false
+      mesh.receiveShadow = false
+      for (let i = 0; i < batch.matrices.length; i++) {
+        mesh.setMatrixAt(i, batch.matrices[i])
+        mesh.setColorAt(i, batch.colors[i])
+      }
+      mesh.instanceMatrix.needsUpdate = true
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+      mesh.frustumCulled = false
+      group.add(mesh)
+    }
+  }, [scatterLayers, splinePCG, heightfield, sceneParams.displacementScale])
+
+  // Bevy-style splines: ribbon (roads/rivers) or centerline only + control markers.
+  useEffect(() => {
+    const group = splineGroupRef.current
+    if (!group) return
+    clearSplineGroup(group)
+    if (!splinePCG || !heightfield || heightfield.length < 4) return
+    if (splinePCG.paths.length === 0) return
+
+    const mode = splinePCG.convertTo
+    const showRibbon = mode === 'roads' || mode === 'river'
+
+    for (const path of splinePCG.paths) {
+      if (path.controls.length < 2) continue
+      const world = projectSplinePath(path, splinePCG, heightfield, sceneParams.displacementScale)
+
+      if (showRibbon) {
+        const geo = buildRibbonGeometry(world, splinePCG.width)
+        if (geo) {
+          const mesh = new THREE.Mesh(geo, createRibbonMaterial(mode))
+          mesh.name = `spline-ribbon-${path.id}`
+          mesh.frustumCulled = false
+          group.add(mesh)
+        }
+      }
+
+      // Cyan centerline (always — Bevy screenshots show it on roads & spline-only)
+      const linePts = world.map((p) => new THREE.Vector3(p.x, p.y + 0.02, p.z))
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(linePts)
+      const line = new THREE.Line(lineGeo, createCenterlineMaterial())
+      line.frustumCulled = false
+      group.add(line)
+
+      // Control-point rings (Bevy-style nodes)
+      const markers = projectControlMarkers(
+        path,
+        heightfield,
+        sceneParams.displacementScale,
+        0.1,
+      )
+      for (const m of markers) {
+        const ringGeo = new THREE.RingGeometry(0.06, 0.1, 20)
+        ringGeo.rotateX(-Math.PI / 2)
+        const ring = new THREE.Mesh(
+          ringGeo,
+          new THREE.MeshBasicMaterial({
+            color: 0x7ad0ff,
+            transparent: true,
+            opacity: 0.95,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        )
+        ring.position.set(m.x, m.y, m.z)
+        ring.frustumCulled = false
+        group.add(ring)
+      }
+    }
+  }, [splinePCG, heightfield, sceneParams.displacementScale])
+
   // Bump map version whenever colorMap or heightfield reference changes.
   useEffect(() => {
     mapVersionRef.current += 1
   }, [colorMap, heightfield])
 
-  // Sync latest segments ref.
-  useEffect(() => {
-    segmentsRef.current = sceneParams.planeSegments
-  }, [sceneParams.planeSegments])
-
-  // Sync displacement scale ref.
-  useEffect(() => {
-    dispScaleRef.current = sceneParams.displacementScale
-  }, [sceneParams.displacementScale])
-
   // Sync fog ref.
   useEffect(() => {
     fogEnabledRef.current = sceneParams.fog
   }, [sceneParams.fog])
+
+  // Do NOT mirror displacementScale into dispScaleRef here — the animate loop
+  // compares sceneRef vs dispScaleRef and calls applyHeightfield() on change.
+  // Syncing early would skip the mesh update until planeSegments rebuilds.
 
   return (
     <div
@@ -385,4 +689,28 @@ export default function ThreeCanvas({
       aria-label="Interactive 3D canvas"
     />
   )
+}
+
+function clearScatterGroup(group: THREE.Group) {
+  for (const child of [...group.children]) {
+    group.remove(child)
+    if (child instanceof THREE.InstancedMesh) {
+      // Geometry is shared via plant cache — do not dispose it.
+      child.dispose()
+    }
+  }
+}
+
+function clearSplineGroup(group: THREE.Group) {
+  for (const child of [...group.children]) {
+    group.remove(child)
+    if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+      child.geometry.dispose()
+      if (Array.isArray(child.material)) {
+        for (const m of child.material) m.dispose()
+      } else {
+        child.material.dispose()
+      }
+    }
+  }
 }

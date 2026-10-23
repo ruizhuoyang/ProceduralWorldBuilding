@@ -19,6 +19,14 @@ import {
   type ShaderStudyParams,
 } from './lib/shaders/types'
 import { buildValleyWaterSheet } from './lib/shaders/demoWaterSheet'
+import { createDefaultScatterLayers, type ScatterLayer } from './lib/scatter/types'
+import { regenerateSplines } from './lib/spline/generatePath'
+import { applySplineInfluence } from './lib/spline/influence'
+import { DEFAULT_SPLINE_PCG, type SplinePCGParams } from './lib/spline/types'
+import {
+  DEFAULT_PARTICLE_WEATHER,
+  type ParticleWeatherParams,
+} from './lib/particles/types'
 import { collectSurfaceVoxels, countSolid } from './lib/voxel/densityGrid'
 import { marchingCubes } from './lib/voxel/marchingCubes'
 import { buildVoxelGrid, composeVoxelDensity, createDefaultVoxelParams, type VoxelParams } from './lib/voxel/voxelField'
@@ -115,6 +123,13 @@ function App() {
   const [voxelWorkspace, setVoxelWorkspace] = useState<VoxelWorkspace>('field')
   const [shaderMode, setShaderMode] = useState<ShaderStudyMode>('deform')
   const [shaderParams, setShaderParams] = useState<ShaderStudyParams>(createDefaultShaderParams)
+  const [scatterLayers, setScatterLayers] = useState<ScatterLayer[]>(createDefaultScatterLayers)
+  /** False until user presses Distribute — 3D World starts with bare terrain. */
+  const [scatterPlaced, setScatterPlaced] = useState(false)
+  const [splinePCG, setSplinePCG] = useState<SplinePCGParams>(DEFAULT_SPLINE_PCG)
+  /** Heightfield snapshot before spline flatten/carve — restored on Clear. */
+  const heightBeforeSplineRef = useRef<Float32Array | null>(null)
+  const [particleWeather, setParticleWeather] = useState<ParticleWeatherParams>(DEFAULT_PARTICLE_WEATHER)
   const [subTab, setSubTab] = useState<SubTab>('noise')
   const [layers, setLayers] = useState<NoiseLayer[]>(createCalibratedLayers)
   const [mapOffset, setMapOffset] = useState<MapOffset>(ZERO_OFFSET)
@@ -422,6 +437,8 @@ function App() {
     setColorMap(terrain.colorMap)
     setHeightfield(terrain.heightfield)
     setAppliedSource('noise')
+    heightBeforeSplineRef.current = null
+    setSplinePCG((p) => ({ ...p, paths: [] }))
   }, [layers, sceneParams.noiseFieldSize, mapOffset])
 
   const handleLoadPreset = useCallback(() => {
@@ -439,7 +456,61 @@ function App() {
     setColorMap(null)
     setHeightfield(null)
     setAppliedSource(null)
+    setScatterPlaced(false)
+    heightBeforeSplineRef.current = null
+    setSplinePCG((p) => ({ ...p, paths: [] }))
   }, [])
+
+  const handleDistributeScatter = useCallback(() => {
+    setScatterLayers((layers) =>
+      layers.map((l) => ({ ...l, seed: (l.seed + 7919) % 1_000_000 })),
+    )
+    setScatterPlaced(true)
+  }, [])
+
+  const handleClearScatter = useCallback(() => setScatterPlaced(false), [])
+
+  const handleRegenerateSplines = useCallback(() => {
+    if (!heightfield) return
+
+    const base = heightBeforeSplineRef.current
+      ? new Float32Array(heightBeforeSplineRef.current)
+      : new Float32Array(heightfield)
+    if (!heightBeforeSplineRef.current) {
+      heightBeforeSplineRef.current = new Float32Array(heightfield)
+    }
+
+    const next = regenerateSplines(
+      { ...splinePCG, seed: (splinePCG.seed + 4243) % 1_000_000, paths: [] },
+      base,
+    )
+    setSplinePCG(next)
+    setHeightfield(applySplineInfluence(base, next, sceneParams.displacementScale))
+  }, [heightfield, splinePCG, sceneParams.displacementScale])
+
+  const handleClearSplines = useCallback(() => {
+    if (heightBeforeSplineRef.current) {
+      setHeightfield(new Float32Array(heightBeforeSplineRef.current))
+      heightBeforeSplineRef.current = null
+    }
+    setSplinePCG((p) => ({ ...p, paths: [] }))
+  }, [])
+
+  /** Live-update convert / width influence without re-rolling path seeds. */
+  const handleSplinePCGChange = useCallback(
+    (next: SplinePCGParams) => {
+      setSplinePCG(next)
+      if (next.paths.length === 0 || !heightBeforeSplineRef.current) return
+      setHeightfield(
+        applySplineInfluence(
+          new Float32Array(heightBeforeSplineRef.current),
+          next,
+          sceneParams.displacementScale,
+        ),
+      )
+    },
+    [sceneParams.displacementScale],
+  )
 
   // Erosion callbacks
   const handleGenerateBase = useCallback(() => {
@@ -462,6 +533,8 @@ function App() {
     setColorMap(heightmapToTexture(state.heightmap, size, colorMode))
     setHeightfield(new Float32Array(state.heightmap))
     setAppliedSource('erosion')
+    heightBeforeSplineRef.current = null
+    setSplinePCG((p) => ({ ...p, paths: [] }))
   }, [])
 
   const handleApplyErosion = useCallback(() => {
@@ -691,6 +764,9 @@ function App() {
                 colorMap={terrainColorMap}
                 heightfield={heightfield}
                 environment={environment}
+                scatterLayers={scatterPlaced ? scatterLayers : []}
+                splinePCG={splinePCG.paths.length > 0 ? splinePCG : null}
+                particleWeather={particleWeather}
                 onTimeOfDayChange={handleTimeOfDayChange}
               />
               {showPreview && (
@@ -783,6 +859,17 @@ function App() {
           onApplyErosion={handleApplyErosion}
           liveSync={liveSync}
           onLiveSyncChange={handleLiveSyncChange}
+          scatterLayers={scatterLayers}
+          onScatterLayersChange={setScatterLayers}
+          scatterPlaced={scatterPlaced}
+          onDistributeScatter={handleDistributeScatter}
+          onClearScatter={handleClearScatter}
+          splinePCG={splinePCG}
+          onSplinePCGChange={handleSplinePCGChange}
+          onRegenerateSplines={handleRegenerateSplines}
+          onClearSplines={handleClearSplines}
+          particleWeather={particleWeather}
+          onParticleWeatherChange={setParticleWeather}
         />
         )}
       </main>

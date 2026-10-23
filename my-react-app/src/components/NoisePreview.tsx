@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react'
 import {
-  applyShaping,
   blendValues,
   colorForValue,
   createNoiseSampler,
@@ -40,7 +39,7 @@ export default function NoisePreview({
       const colorMode = layers[0].params.colorMode
       const activeLayers = layers
         .filter((l) => l.visible)
-        .map((l) => ({ layer: l, sampler: createNoiseSampler(l.params) }))
+        .map((l) => ({ layer: l, sampler: createNoiseSampler(l.params, l.shaping) }))
 
       const image = ctx.createImageData(size, size)
       const px = image.data
@@ -53,8 +52,7 @@ export default function NoisePreview({
           for (const { layer, sampler } of activeLayers) {
             const nx = (x / size) * layer.params.scale
             const ny = (y / size) * layer.params.scale
-            let v = sampler.sample(nx, ny)
-            v = applyShaping(v, layer.shaping)
+            const v = sampler.sample(nx, ny)
 
             if (first) {
               result = v * layer.opacity

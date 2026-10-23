@@ -4,15 +4,12 @@
 
 // ── Types ────────────────────────────────────────────────
 
+/** Base noise equations (Class 03). Fractal modes live in shaping, not here. */
 export type NoiseType =
+  | 'white'
   | 'perlin'
   | 'simplex'
   | 'value'
-  | 'fbm'
-  | 'ridged'
-  | 'billow'
-  | 'turbulence'
-  | 'domainWarp'
   | 'worley'
   | 'voronoi'
 
@@ -20,13 +17,17 @@ export type ColorMode = 'grayscale' | 'accent' | 'terrain' | 'heat'
 export type DistanceMetric = 'euclidean' | 'manhattan' | 'chebyshev'
 export type CellReturn = 'f1' | 'f2' | 'f2-f1'
 
-// ── Shaping operations ──────────────────────────────────
+// ── Shaping operations (Class 03 math modifiers) ─────────
 
 export type ShapingOp =
   | 'none'
-  | 'power'
-  | 'smoothstep'
+  | 'ridged'
+  | 'billow'
+  | 'turbulence'
   | 'terrace'
+  | 'power'
+  | 'domainWarp'
+  | 'smoothstep'
   | 'clamp'
   | 'abs'
   | 'quantize'
@@ -35,17 +36,27 @@ export type ShapingOpInfo = {
   value: ShapingOp
   label: string
   description: string
+  group: 'class03' | 'extra'
 }
 
 export const SHAPING_OPS: ShapingOpInfo[] = [
-  { value: 'none',       label: 'None',       description: 'No shaping — raw noise output' },
-  { value: 'power',      label: 'Power',      description: 'Raise to exponent — darken lows / brighten highs' },
-  { value: 'smoothstep', label: 'Smoothstep',  description: 'Hermite S-curve — soft contrast clamp' },
-  { value: 'terrace',    label: 'Terrace',     description: 'Staircase levels — flat plateaus' },
-  { value: 'clamp',      label: 'Clamp',       description: 'Cut off below min / above max' },
-  { value: 'abs',        label: 'Abs',         description: 'Mirror around 0.5 — valley at center' },
-  { value: 'quantize',   label: 'Quantize',    description: 'Snap to N discrete levels — posterize' },
+  { value: 'none',       label: 'None',            group: 'class03', description: 'Raw equation output (multi-octave = fBm)' },
+  { value: 'ridged',     label: 'Ridged',          group: 'class03', description: '1 − |noise| per octave — sharp mountain ridges' },
+  { value: 'billow',     label: 'Billow',          group: 'class03', description: '|noise| per octave — soft cloud-like billows' },
+  { value: 'turbulence', label: 'Turbulence',      group: 'class03', description: 'Abs-value octaves — swirly / marble feel' },
+  { value: 'terrace',    label: 'Terracing',       group: 'class03', description: 'Staircase levels — flat plateaus' },
+  { value: 'power',      label: 'Power curve',     group: 'class03', description: 'Raise to exponent — flatten lows or punch highs' },
+  { value: 'domainWarp', label: 'Domain warping',  group: 'class03', description: 'Warp coordinates with noise — organic distortion' },
+  { value: 'smoothstep', label: 'Smoothstep',      group: 'extra',   description: 'Hermite S-curve — soft contrast clamp' },
+  { value: 'clamp',      label: 'Clamp',           group: 'extra',   description: 'Cut off below min / above max' },
+  { value: 'abs',        label: 'Abs',             group: 'extra',   description: 'Mirror around 0.5 — valley at center' },
+  { value: 'quantize',   label: 'Quantize',        group: 'extra',   description: 'Snap to N discrete levels — posterize' },
 ]
+
+/** Fractal / domain shaping runs inside the sampler, not as a post curve. */
+export function isFractalShaping(op: ShapingOp): boolean {
+  return op === 'ridged' || op === 'billow' || op === 'turbulence' || op === 'domainWarp'
+}
 
 export type ShapingParams = {
   op: ShapingOp
@@ -69,8 +80,9 @@ export const DEFAULT_SHAPING: ShapingParams = {
   quantizeLevels: 5,
 }
 
-/** Apply a shaping operation to a 0..1 value. */
+/** Apply a post-process shaping curve to a 0..1 value (not fractal modes). */
 export function applyShaping(v: number, s: ShapingParams): number {
+  if (isFractalShaping(s.op)) return v
   switch (s.op) {
     case 'power':
       return Math.pow(v, s.power)
@@ -196,16 +208,12 @@ export type NoiseTypeInfo = {
 }
 
 export const NOISE_TYPES: NoiseTypeInfo[] = [
-  { value: 'perlin',     label: 'Perlin',       group: 'Basic',    description: 'Classic gradient noise' },
-  { value: 'simplex',    label: 'Simplex',      group: 'Basic',    description: 'Less directional artifacts than Perlin' },
-  { value: 'value',      label: 'Value',        group: 'Basic',    description: 'Lattice-interpolated random values' },
-  { value: 'fbm',        label: 'fBm',          group: 'Fractal',  description: 'Fractional Brownian Motion — layered octaves' },
-  { value: 'ridged',     label: 'Ridged',       group: 'Fractal',  description: 'Sharp ridges — great for mountains' },
-  { value: 'billow',     label: 'Billow',       group: 'Fractal',  description: 'Abs-value octaves — cloud-like billowy shapes' },
-  { value: 'turbulence', label: 'Turbulence',   group: 'Fractal',  description: 'Classic turbulence — swirly, marble-like' },
-  { value: 'domainWarp', label: 'Domain Warp',  group: 'Fractal',  description: 'fBm warped by another fBm — organic shapes' },
-  { value: 'worley',     label: 'Worley',       group: 'Cellular', description: 'Distance to nearest cell point' },
-  { value: 'voronoi',    label: 'Voronoi',      group: 'Cellular', description: 'Cell ID coloring — stained glass pattern' },
+  { value: 'white',   label: 'White',    group: 'Equation', description: 'Pure randomness — no spatial correlation' },
+  { value: 'perlin',  label: 'Perlin',   group: 'Equation', description: 'Classic gradient noise — smooth hills' },
+  { value: 'simplex', label: 'Simplex',  group: 'Equation', description: 'Less directional artifacts than Perlin' },
+  { value: 'value',   label: 'Value',    group: 'Equation', description: 'Lattice-interpolated random values' },
+  { value: 'worley',  label: 'Cellular', group: 'Equation', description: 'Distance to nearest cell point (Worley)' },
+  { value: 'voronoi', label: 'Voronoi',  group: 'Equation', description: 'Cell ID coloring — stained glass pattern' },
 ]
 
 export const NOISE_GROUPS = [...new Set(NOISE_TYPES.map((t) => t.group))]
@@ -230,7 +238,7 @@ export const CELL_RETURNS: { value: CellReturn; label: string }[] = [
 ]
 
 export const DEFAULT_NOISE_PARAMS: NoiseParams = {
-  type: 'fbm',
+  type: 'perlin',
   scale: 6,
   seed: 1337,
   resolution: 512,
@@ -245,8 +253,13 @@ export const DEFAULT_NOISE_PARAMS: NoiseParams = {
   warpStrength: 4,
 }
 
-export function usesFractal(type: NoiseType) {
-  return type === 'fbm' || type === 'ridged' || type === 'billow' || type === 'turbulence' || type === 'domainWarp'
+/** Octaves / persistence / lacunarity — always useful (1 octave = single sample). */
+export function usesFractalControls(_type?: NoiseType) {
+  return true
+}
+
+export function usesWarpControls(shaping: ShapingParams) {
+  return shaping.op === 'domainWarp'
 }
 
 export function usesCellular(type: NoiseType) {
@@ -294,10 +307,20 @@ export type NoiseSampler = {
   sample: (x: number, y: number) => number
 }
 
-export function createNoiseSampler(params: NoiseParams): NoiseSampler {
+export function createNoiseSampler(
+  params: NoiseParams,
+  shaping: ShapingParams = DEFAULT_SHAPING,
+): NoiseSampler {
   const perm = buildPermutation(params.seed)
   const hash = (x: number, y: number) =>
     perm[(perm[x & 255] + (y & 255)) & 511]
+
+  /** White noise — independent random per lattice cell. */
+  const white = (x: number, y: number) => {
+    const xi = Math.floor(x)
+    const yi = Math.floor(y)
+    return (hash(xi, yi) / 255) * 2 - 1
+  }
 
   const perlin = (x: number, y: number) => {
     const xi = Math.floor(x)
@@ -438,18 +461,30 @@ export function createNoiseSampler(params: NoiseParams): NoiseSampler {
     }
   }
 
-  const domainWarp = () => {
+  const base = (() => {
+    switch (params.type) {
+      case 'white':   return white
+      case 'simplex': return simplex
+      case 'value':   return value
+      case 'worley':  return worley
+      case 'voronoi': return voronoi
+      case 'perlin':
+      default:        return perlin
+    }
+  })()
+
+  const domainWarp = (fn: (x: number, y: number) => number) => {
     const { octaves, persistence, lacunarity, warpStrength } = params
-    const fbm = fractal(perlin, 'fbm')
+    const warpField = fractal(fn, 'fbm')
     return (x: number, y: number) => {
-      const wx = x + warpStrength * fbm(x, y)
-      const wy = y + warpStrength * fbm(x + 5.2, y + 1.3)
+      const wx = x + warpStrength * warpField(x, y)
+      const wy = y + warpStrength * warpField(x + 5.2, y + 1.3)
       let amplitude = 1
       let frequency = 1
       let total = 0
       let maxAmplitude = 0
       for (let i = 0; i < octaves; i++) {
-        total += perlin(wx * frequency, wy * frequency) * amplitude
+        total += fn(wx * frequency, wy * frequency) * amplitude
         maxAmplitude += amplitude
         amplitude *= persistence
         frequency *= lacunarity
@@ -458,19 +493,17 @@ export function createNoiseSampler(params: NoiseParams): NoiseSampler {
     }
   }
 
+  // Class 03: equation → shaping. Ridged / Billow / Turbulence / Domain warp
+  // reshape how octaves combine; other ops are post-curves on 0..1.
   const signed = (() => {
-    switch (params.type) {
-      case 'perlin':     return perlin
-      case 'simplex':    return simplex
-      case 'value':      return value
-      case 'worley':     return worley
-      case 'voronoi':    return voronoi
-      case 'ridged':     return fractal(perlin, 'ridged')
-      case 'billow':     return fractal(perlin, 'billow')
-      case 'turbulence': return fractal(perlin, 'turbulence')
-      case 'domainWarp': return domainWarp()
-      case 'fbm': default: return fractal(perlin, 'fbm')
+    const op = shaping.op
+    if (op === 'domainWarp') return domainWarp(base)
+    if (op === 'ridged' || op === 'billow' || op === 'turbulence') {
+      return fractal(base, op)
     }
+    // None / post-curve: multi-octave fBm of the base equation
+    if (params.octaves > 1) return fractal(base, 'fbm')
+    return base
   })()
 
   const { power, invert } = params
@@ -480,6 +513,7 @@ export function createNoiseSampler(params: NoiseParams): NoiseSampler {
       let v = Math.min(1, Math.max(0, signed(x, y) * 0.5 + 0.5))
       if (power !== 1) v = Math.pow(v, power)
       if (invert) v = 1 - v
+      v = applyShaping(v, shaping)
       return v
     },
   }
@@ -498,9 +532,11 @@ export function sampleLayers(layers: NoiseLayer[], nx: number, ny: number): numb
   for (const layer of layers) {
     if (!layer.visible) continue
 
-    const sampler = createNoiseSampler(layer.params)
-    let v = sampler.sample(nx * (layer.params.scale / layers[0].params.scale), ny * (layer.params.scale / layers[0].params.scale))
-    v = applyShaping(v, layer.shaping)
+    const sampler = createNoiseSampler(layer.params, layer.shaping)
+    const v = sampler.sample(
+      nx * (layer.params.scale / layers[0].params.scale),
+      ny * (layer.params.scale / layers[0].params.scale),
+    )
 
     if (first) {
       result = v * layer.opacity

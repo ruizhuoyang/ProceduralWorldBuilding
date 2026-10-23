@@ -1,10 +1,12 @@
-﻿# Chunking in the Voxel Terrain
+# Chunking in the Voxel Terrain
 
 Study note for **Data structures**. Full technical write-up below; screenshot and code pointers first.
 
 ## Screenshot
 
-![Chunk bounds and tinted chunk meshes](../../Docs/assets/05-chunk-bounds.png)
+Chunk bounds / tint toggles live in **Voxel Terrain → Field → Chunks**. Same view as the Class 04 mesh shot:
+
+![Voxel Terrain (chunked meshing)](../../Docs/assets/04-voxel-mesh.png)
 
 ## Code pointers
 

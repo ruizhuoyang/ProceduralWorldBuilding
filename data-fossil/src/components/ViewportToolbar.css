@@ -1,0 +1,40 @@
+.vp-tools {
+  display: flex;
+  flex-direction: row;
+  gap: 0.3rem;
+}
+
+.vp-tools__btn {
+  width: 2rem;
+  height: 2rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--text-muted);
+  background: rgba(236, 235, 232, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.vp-tools__btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.vp-tools__btn--on {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.vp-tools__btn--on:hover {
+  background: var(--accent-hot);
+  border-color: var(--accent-hot);
+  color: var(--accent-ink);
+}

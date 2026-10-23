@@ -3,16 +3,15 @@ import ParamSlider from './ParamSlider'
 import type { ViewMode } from './ViewSwitcher'
 import type { SceneParams, ViewportParams } from './ThreeCanvas'
 import {
-  BLEND_MODES,
   CELL_RETURNS,
   COLOR_MODES,
   DISTANCE_METRICS,
   NOISE_GROUPS,
   NOISE_TYPES,
   SHAPING_OPS,
-  createLayer,
   usesCellular,
-  usesFractal,
+  usesFractalControls,
+  usesWarpControls,
   type ColorMode,
   type NoiseLayer,
   type NoiseParams,
@@ -20,8 +19,6 @@ import {
 } from '../lib/noise'
 import type { ErosionParams, ErosionState } from '../lib/erosion'
 import {
-  WEATHER_PRESETS,
-  WEATHERS,
   formatTimeOfDay,
   type EnvironmentParams,
 } from '../lib/environment'
@@ -32,34 +29,54 @@ import {
   type GradientStop,
   type TerrainColorMode,
 } from '../lib/heightGradient'
+import {
+  PLANT_KINDS,
+  createScatterLayer,
+  type PlantKind,
+  type ScatterLayer,
+} from '../lib/scatter/types'
+import {
+  CONVERT_TO_OPTIONS,
+  type ConvertTo,
+  type SplinePCGParams,
+} from '../lib/spline/types'
+import {
+  applyPhenomenonPreset,
+  FIELD_MODES,
+  PHENOMENA,
+  type FieldMode,
+  type ParticleWeatherParams,
+  type WeatherPhenomenon,
+} from '../lib/particles/types'
 import './SidePanel.css'
 
 export type SubTab = 'noise' | 'simulation'
 
+/** Class 06 workspace under 3D World. */
+export type WorldTab = 'terrain' | 'scatter' | 'splines' | 'particles'
+
+const WORLD_TABS: { id: WorldTab; label: string }[] = [
+  { id: 'terrain', label: 'Terrain' },
+  { id: 'scatter', label: 'Scatter' },
+  { id: 'splines', label: 'Splines' },
+  { id: 'particles', label: 'Particles' },
+]
+
 type SectionId =
-  // 3D World
+  // 3D World — always visible
   | 'display'
-  | 'geometry'
+  | 'mesh'
+  // Below Class 06 tabs module (order: Environment, then Camera last)
   | 'environment'
   | 'camera'
-  | 'world'
-  // 2D Terrain — Noise tab
-  | 'layers'
-  | 'noiseOutput'
-  // 2D Terrain — Simulation tab
-  | 'simulation'
-  // 2D Terrain — both tabs
+  // 2D Terrain — below Noise / Simulation tabs
   | 'analysis'
 
 const DEFAULT_OPEN: Record<SectionId, boolean> = {
   display: true,
-  geometry: true,
-  environment: false,
-  camera: false,
-  world: false,
-  layers: false,
-  noiseOutput: true,
-  simulation: true,
+  mesh: true,
+  environment: true,
+  camera: true,
   analysis: false,
 }
 
@@ -108,6 +125,21 @@ type SidePanelProps = {
   onApplyErosion: () => void
   liveSync: boolean
   onLiveSyncChange: (enabled: boolean) => void
+  /** Class 06 plant scatter layers (3D World). */
+  scatterLayers: ScatterLayer[]
+  onScatterLayersChange: (layers: ScatterLayer[]) => void
+  /** Plants only show in the viewport after Distribute is pressed. */
+  scatterPlaced: boolean
+  onDistributeScatter: () => void
+  onClearScatter: () => void
+  /** Class 06 PCG splines (Bevy-style). */
+  splinePCG: SplinePCGParams
+  onSplinePCGChange: (params: SplinePCGParams) => void
+  onRegenerateSplines: () => void
+  onClearSplines: () => void
+  /** Class 06 weather particles. */
+  particleWeather: ParticleWeatherParams
+  onParticleWeatherChange: (params: ParticleWeatherParams) => void
 }
 
 type AccordionSectionProps = {
@@ -213,9 +245,35 @@ export default function SidePanel({
   onApplyErosion,
   liveSync,
   onLiveSyncChange,
+  scatterLayers,
+  onScatterLayersChange,
+  scatterPlaced,
+  onDistributeScatter,
+  onClearScatter,
+  splinePCG,
+  onSplinePCGChange,
+  onRegenerateSplines,
+  onClearSplines,
+  particleWeather,
+  onParticleWeatherChange,
 }: SidePanelProps) {
-  const [expandedLayer, setExpandedLayer] = useState<string | null>(null)
+  const patchParticles = (patch: Partial<ParticleWeatherParams>) => {
+    onParticleWeatherChange({ ...particleWeather, ...patch })
+  }
+
+  const patchSpline = (patch: Partial<SplinePCGParams>) => {
+    onSplinePCGChange({ ...splinePCG, ...patch })
+  }
+  const [selectedNoiseId, setSelectedNoiseId] = useState<string | null>(null)
+  const [worldTab, setWorldTab] = useState<WorldTab>('terrain')
+  const [expandedScatterId, setExpandedScatterId] = useState<string | null>(null)
   const [openSections, setOpenSections] = useState<Record<SectionId, boolean>>(DEFAULT_OPEN)
+
+  const activeNoiseId = selectedNoiseId && layers.some((l) => l.id === selectedNoiseId)
+    ? selectedNoiseId
+    : layers[0]?.id ?? null
+  const activeNoise = layers.find((l) => l.id === activeNoiseId) ?? layers[0] ?? null
+  const activeNoiseIndex = activeNoise ? layers.findIndex((l) => l.id === activeNoise.id) : -1
 
   const toggleSection = (id: SectionId) =>
     setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }))
@@ -271,45 +329,13 @@ export default function SidePanel({
     )
   }
 
-  const addLayer = () => {
-    const layer = createLayer({
-      name: `Layer ${layers.length + 1}`,
-      blendMode: 'add',
-      opacity: 0.5,
-      params: {
-        ...layers[0].params,
-        type: 'worley',
-        seed: Math.floor(Math.random() * 100000),
-      },
-    })
-    onLayersChange([...layers, layer])
-    setExpandedLayer(layer.id)
-  }
-
-  const removeLayer = (id: string) => {
-    if (layers.length <= 1) return
-    const next = layers.filter((l) => l.id !== id)
-    onLayersChange(next)
-    if (expandedLayer === id) setExpandedLayer(next[0]?.id ?? null)
-  }
-
-  const moveLayer = (id: string, dir: -1 | 1) => {
-    const idx = layers.findIndex((l) => l.id === id)
-    const target = idx + dir
-    if (target < 0 || target >= layers.length) return
-    const copy = [...layers]
-    const tmp = copy[idx]
-    copy[idx] = copy[target]
-    copy[target] = tmp
-    onLayersChange(copy)
-  }
-
   // ═══════════════════════════════════════
-  // 3D World — visualize, inspect, experience
+  // 3D World — Class 06: Terrain → Scatter → Splines → Particles
   // ═══════════════════════════════════════
   if (view === '3d') {
     return (
       <aside className="side-panel" aria-label="3D world controls">
+        {/* Always visible — original 3D viewport controls */}
         {section('display', 'Display', (
           <>
             <ToggleRow label="Solid" checked={viewport.solid} onChange={(v) => updateViewport('solid', v)} />
@@ -365,10 +391,60 @@ export default function SidePanel({
           </>
         ))}
 
-        {section('geometry', 'Geometry', (
+        {/* Always visible — mesh shape (not tied to Scatter) */}
+        {section('mesh', 'Mesh', (
           <>
+            <ParamSlider
+              id="plane-segments"
+              label="Plane Resolution"
+              value={sceneParams.planeSegments}
+              min={4}
+              max={1024}
+              step={4}
+              onChange={(v) => updateScene('planeSegments', v)}
+            />
+            <ParamSlider
+              id="displacement-scale"
+              label="Terrain Height"
+              value={sceneParams.displacementScale}
+              min={0}
+              max={6}
+              step={0.1}
+              format={(v) => v.toFixed(2)}
+              onChange={(v) => updateScene('displacementScale', v)}
+            />
+            <p className="side-panel__hint">
+              Scales the terrain mesh only. Plants stick to the surface after you Distribute in Scatter.
+            </p>
+            {heightfieldSize !== null && (
+              <p className="side-panel__hint">
+                {sceneParams.planeSegments < heightfieldSize
+                  ? `Plane ${sceneParams.planeSegments} < map ${heightfieldSize}² — raise Plane Resolution to ${heightfieldSize}.`
+                  : `Plane ${sceneParams.planeSegments} ≥ map ${heightfieldSize}².`}
+              </p>
+            )}
+          </>
+        ))}
+
+        <nav className="sub-tabs sub-tabs--world" aria-label="Class 06 distributions">
+          {WORLD_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`sub-tabs__button ${worldTab === tab.id ? 'sub-tabs__button--active' : ''}`}
+              aria-pressed={worldTab === tab.id}
+              onClick={() => setWorldTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+
+        {worldTab === 'terrain' && (
+          <>
+            <div className="side-panel__section">Terrain Source</div>
             <div className="side-panel__field">
-              <span className="side-panel__label">Terrain</span>
+              <span className="side-panel__label">Heightmap</span>
               <nav className="sub-tabs" aria-label="Terrain source">
                 <button
                   type="button"
@@ -396,45 +472,19 @@ export default function SidePanel({
               </nav>
             </div>
             <p className="side-panel__hint">
-              Clicking Noise or Sim loads the latest map from 2D Terrain.
+              Load a heightmap from 2D. To run erosion, use 2D Terrain → Simulation (Start / Stop there).
             </p>
-            {erosionState && (
+            {hasAppliedMap && appliedSource === 'erosion' && (
               <>
-                <ToggleRow label="Live Sync to 3D" checked={liveSync} onChange={onLiveSyncChange} />
-                <button
-                  type="button"
-                  className="side-panel__button side-panel__button--accent"
-                  onClick={erosionRunning ? onStopErosion : onStartErosion}
-                >
-                  {erosionRunning ? '■ Stop Erosion' : '▶ Run Erosion'}
-                </button>
+                <ToggleRow
+                  label="Live Sync from Sim"
+                  checked={liveSync}
+                  onChange={onLiveSyncChange}
+                />
+                <p className="side-panel__hint">
+                  When on, the 3D heightmap updates while 2D Simulation is running — it does not place plants.
+                </p>
               </>
-            )}
-            <ParamSlider
-              id="plane-segments"
-              label="Plane Resolution"
-              value={sceneParams.planeSegments}
-              min={4}
-              max={1024}
-              step={4}
-              onChange={(v) => updateScene('planeSegments', v)}
-            />
-            <ParamSlider
-              id="displacement-scale"
-              label="Displacement"
-              value={sceneParams.displacementScale}
-              min={0}
-              max={6}
-              step={0.1}
-              format={(v) => v.toFixed(2)}
-              onChange={(v) => updateScene('displacementScale', v)}
-            />
-            {heightfieldSize !== null && (
-              <p className="side-panel__hint">
-                {sceneParams.planeSegments < heightfieldSize
-                  ? `Plane ${sceneParams.planeSegments} < map ${heightfieldSize}² — terrain detail is lost. Raise Plane Resolution to ${heightfieldSize}.`
-                  : `Plane ${sceneParams.planeSegments} ≥ map ${heightfieldSize}² — every height sample is shown.`}
-              </p>
             )}
             {hasAppliedMap && appliedSource === 'noise' && (
               <div className="side-panel__row">
@@ -445,12 +495,516 @@ export default function SidePanel({
               </div>
             )}
           </>
-        ))}
+        )}
 
+        {worldTab === 'scatter' && (
+          <>
+            <p className="side-panel__hint">
+              Class 06 · A1 — set up layers, then press Distribute to place plants on the current terrain. Nothing grows until you distribute.
+            </p>
+            {!hasHeightfield && (
+              <div className="side-panel__field">
+                <p className="side-panel__hint">No heightmap yet — open Terrain tab or:</p>
+                <button type="button" className="side-panel__button side-panel__button--accent" onClick={onApply}>
+                  Use Noise map
+                </button>
+              </div>
+            )}
+            <div className="side-panel__field side-panel__row">
+              <button
+                type="button"
+                className="side-panel__button side-panel__button--accent"
+                style={{ flex: 1 }}
+                disabled={!hasHeightfield}
+                title={hasHeightfield ? undefined : 'Load a heightmap first'}
+                onClick={onDistributeScatter}
+              >
+                {scatterPlaced ? '↻ Re-distribute' : '▶ Distribute plants'}
+              </button>
+              <button
+                type="button"
+                className="side-panel__button"
+                style={{ flex: 1 }}
+                disabled={!scatterPlaced}
+                onClick={onClearScatter}
+              >
+                Clear plants
+              </button>
+            </div>
+            <p className="side-panel__hint">
+              {scatterPlaced
+                ? 'Plants are placed. Edit layers then Re-distribute to refresh.'
+                : 'Viewport has no plant layer yet.'}
+            </p>
+            <div className="layer-list">
+              {scatterLayers.map((layer, idx) => {
+                const isExpanded = expandedScatterId === layer.id
+                return (
+                  <div
+                    key={layer.id}
+                    className={`layer-card ${isExpanded ? 'layer-card--expanded' : ''}`}
+                  >
+                    <div className="layer-card__header">
+                      <label className="side-panel__toggle layer-card__vis">
+                        <input
+                          type="checkbox"
+                          checked={layer.enabled}
+                          aria-label={`Enable ${layer.name}`}
+                          onChange={(e) => {
+                            const enabled = e.target.checked
+                            onScatterLayersChange(
+                              scatterLayers.map((l) => (l.id === layer.id ? { ...l, enabled } : l)),
+                            )
+                          }}
+                        />
+                        <span className="side-panel__toggle-track" />
+                      </label>
+                      <button
+                        type="button"
+                        className="layer-card__name"
+                        onClick={() => setExpandedScatterId(isExpanded ? null : layer.id)}
+                      >
+                        {layer.name}
+                      </button>
+                      <span className="layer-card__type">{layer.plant}</span>
+                      <div className="layer-card__actions">
+                        <button
+                          type="button"
+                          title="Remove"
+                          aria-label={`Remove ${layer.name}`}
+                          onClick={() => {
+                            onScatterLayersChange(scatterLayers.filter((l) => l.id !== layer.id))
+                            if (expandedScatterId === layer.id) setExpandedScatterId(null)
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                    {isExpanded && (
+                      <div className="layer-card__body">
+                        <div className="side-panel__field">
+                          <label className="side-panel__label" htmlFor={`scatter-plant-${layer.id}`}>Plant</label>
+                          <select
+                            id={`scatter-plant-${layer.id}`}
+                            className="side-panel__select"
+                            value={layer.plant}
+                            onChange={(e) => {
+                              const plant = e.target.value as PlantKind
+                              onScatterLayersChange(
+                                scatterLayers.map((l) =>
+                                  l.id === layer.id
+                                    ? {
+                                        ...l,
+                                        plant,
+                                        name: `Layer ${idx + 1} — ${plant[0].toUpperCase()}${plant.slice(1)}s`,
+                                      }
+                                    : l,
+                                ),
+                              )
+                            }}
+                          >
+                            {PLANT_KINDS.map((p) => (
+                              <option key={p.value} value={p.value}>{p.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <ParamSlider
+                          id={`scatter-density-${layer.id}`}
+                          label="Density (how many)"
+                          value={layer.density}
+                          min={8}
+                          max={64}
+                          step={1}
+                          format={(v) => String(Math.round(v))}
+                          onChange={(density) =>
+                            onScatterLayersChange(
+                              scatterLayers.map((l) => (l.id === layer.id ? { ...l, density } : l)),
+                            )
+                          }
+                        />
+                        <ParamSlider
+                          id={`scatter-noise-${layer.id}`}
+                          label="Sparseness (noise gate)"
+                          value={layer.noiseThreshold}
+                          min={0}
+                          max={0.9}
+                          step={0.01}
+                          format={(v) => v.toFixed(2)}
+                          onChange={(noiseThreshold) =>
+                            onScatterLayersChange(
+                              scatterLayers.map((l) => (l.id === layer.id ? { ...l, noiseThreshold } : l)),
+                            )
+                          }
+                        />
+                        <ParamSlider
+                          id={`scatter-slope-${layer.id}`}
+                          label="Max Slope"
+                          value={layer.maxSlopeDeg}
+                          min={10}
+                          max={60}
+                          step={1}
+                          format={(v) => `${Math.round(v)}°`}
+                          onChange={(maxSlopeDeg) =>
+                            onScatterLayersChange(
+                              scatterLayers.map((l) => (l.id === layer.id ? { ...l, maxSlopeDeg } : l)),
+                            )
+                          }
+                        />
+                        <ParamSlider
+                          id={`scatter-hmin-${layer.id}`}
+                          label="Map Height Min"
+                          value={layer.heightMin}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          format={(v) => v.toFixed(2)}
+                          onChange={(heightMin) =>
+                            onScatterLayersChange(
+                              scatterLayers.map((l) => (l.id === layer.id ? { ...l, heightMin } : l)),
+                            )
+                          }
+                        />
+                        <ParamSlider
+                          id={`scatter-hmax-${layer.id}`}
+                          label="Map Height Max"
+                          value={layer.heightMax}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          format={(v) => v.toFixed(2)}
+                          onChange={(heightMax) =>
+                            onScatterLayersChange(
+                              scatterLayers.map((l) => (l.id === layer.id ? { ...l, heightMax } : l)),
+                            )
+                          }
+                        />
+                        <ToggleRow
+                          label="Prefer low valleys"
+                          checked={layer.nearWater}
+                          onChange={(nearWater) =>
+                            onScatterLayersChange(
+                              scatterLayers.map((l) => (l.id === layer.id ? { ...l, nearWater } : l)),
+                            )
+                          }
+                        />
+                        <ToggleRow
+                          label="Align to Slope"
+                          checked={layer.alignToNormal}
+                          onChange={(alignToNormal) =>
+                            onScatterLayersChange(
+                              scatterLayers.map((l) => (l.id === layer.id ? { ...l, alignToNormal } : l)),
+                            )
+                          }
+                        />
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            <button
+              type="button"
+              className="side-panel__button side-panel__button--accent"
+              onClick={() => {
+                const cycle: PlantKind[] = ['tree', 'bush', 'grass']
+                const plant = cycle[scatterLayers.length % 3]
+                const created = createScatterLayer(scatterLayers.length + 1, plant)
+                onScatterLayersChange([...scatterLayers, created])
+                setExpandedScatterId(created.id)
+              }}
+            >
+              + Add Layer {scatterLayers.length + 1}
+            </button>
+          </>
+        )}
+
+        {worldTab === 'splines' && (
+          <>
+            <p className="side-panel__hint">
+              Class 06 · A2 — PCG splines like the Bevy demo: convert to lines, rivers, or roads; tune count / meander / width.
+            </p>
+            {!hasHeightfield && (
+              <div className="side-panel__field">
+                <p className="side-panel__hint">Need a heightmap first:</p>
+                <button type="button" className="side-panel__button side-panel__button--accent" onClick={onApply}>
+                  Use Noise map
+                </button>
+              </div>
+            )}
+
+            <div className="side-panel__section">Convert to</div>
+            <div className="side-panel__field">
+              <label className="side-panel__label" htmlFor="spline-convert">Mode</label>
+              <select
+                id="spline-convert"
+                className="side-panel__select"
+                value={splinePCG.convertTo}
+                onChange={(e) => patchSpline({ convertTo: e.target.value as ConvertTo })}
+              >
+                {CONVERT_TO_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <p className="side-panel__hint">
+              {splinePCG.convertTo === 'splineOnly' && 'Cyan polylines + control rings only (no road/river mesh).'}
+              {splinePCG.convertTo === 'roads' && 'Grey road ribbons; flattens a corridor on the heightmap.'}
+              {splinePCG.convertTo === 'river' && 'Blue river ribbons; carves a trench along the path.'}
+            </p>
+
+            <div className="side-panel__section">Parameters</div>
+            <ParamSlider
+              id="spline-count"
+              label="Count"
+              value={splinePCG.count}
+              min={1}
+              max={8}
+              step={1}
+              onChange={(count) => patchSpline({ count })}
+            />
+            <ParamSlider
+              id="spline-controls"
+              label="Control points"
+              value={splinePCG.controlPoints}
+              min={3}
+              max={24}
+              step={1}
+              onChange={(controlPoints) => patchSpline({ controlPoints })}
+            />
+            <ParamSlider
+              id="spline-meander"
+              label="Meander"
+              value={splinePCG.meander}
+              min={0}
+              max={1}
+              step={0.01}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={(meander) => patchSpline({ meander })}
+            />
+            <ParamSlider
+              id="spline-width"
+              label="Width"
+              value={splinePCG.width}
+              min={0.1}
+              max={1.2}
+              step={0.05}
+              format={(v) => `${(v * 10).toFixed(1)} m`}
+              onChange={(width) => patchSpline({ width })}
+            />
+
+            <div className="side-panel__field side-panel__row">
+              <button
+                type="button"
+                className="side-panel__button side-panel__button--accent"
+                style={{ flex: 1 }}
+                disabled={!hasHeightfield}
+                onClick={onRegenerateSplines}
+              >
+                Regenerate
+              </button>
+              <button
+                type="button"
+                className="side-panel__button"
+                style={{ flex: 1 }}
+                disabled={splinePCG.paths.length === 0}
+                onClick={onClearSplines}
+              >
+                Clear
+              </button>
+            </div>
+            <p className="side-panel__hint">
+              {splinePCG.paths.length > 0
+                ? `${splinePCG.paths.length} path(s) · ${splinePCG.paths.reduce((n, p) => n + p.controls.length, 0)} control points`
+                : 'Press Regenerate to place splines on the current terrain.'}
+            </p>
+          </>
+        )}
+
+        {worldTab === 'particles' && (
+          <>
+            <p className="side-panel__hint">
+              Class 06 · A3 — weather particles driven by forces + a 2D vector field over the terrain. Fluid solver later.
+            </p>
+            {!hasHeightfield && (
+              <div className="side-panel__field">
+                <p className="side-panel__hint">Heightmap optional but recommended (valley spawn / downhill field):</p>
+                <button type="button" className="side-panel__button side-panel__button--accent" onClick={onApply}>
+                  Use Noise map
+                </button>
+              </div>
+            )}
+
+            <ToggleRow
+              label="Run particles"
+              checked={particleWeather.enabled}
+              onChange={(enabled) => patchParticles({ enabled })}
+            />
+
+            <div className="side-panel__section">Phenomenon</div>
+            <div className="side-panel__field">
+              <label className="side-panel__label" htmlFor="particle-phenomenon">Look</label>
+              <select
+                id="particle-phenomenon"
+                className="side-panel__select"
+                value={particleWeather.phenomenon}
+                onChange={(e) => {
+                  const phenomenon = e.target.value as WeatherPhenomenon
+                  onParticleWeatherChange(applyPhenomenonPreset(particleWeather, phenomenon))
+                }}
+              >
+                {PHENOMENA.map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+            </div>
+            <p className="side-panel__hint">
+              {PHENOMENA.find((p) => p.value === particleWeather.phenomenon)?.hint}
+            </p>
+
+            <div className="side-panel__section">Emitter</div>
+            <ParamSlider
+              id="particle-count"
+              label="Max particles"
+              value={particleWeather.count}
+              min={100}
+              max={2500}
+              step={50}
+              onChange={(count) => patchParticles({ count })}
+            />
+            <ParamSlider
+              id="particle-spawn"
+              label="Spawn / sec"
+              value={particleWeather.spawnRate}
+              min={10}
+              max={400}
+              step={10}
+              onChange={(spawnRate) => patchParticles({ spawnRate })}
+            />
+            <ParamSlider
+              id="particle-life"
+              label="Lifetime (s)"
+              value={particleWeather.lifetime}
+              min={0.8}
+              max={10}
+              step={0.1}
+              format={(v) => v.toFixed(1)}
+              onChange={(lifetime) => patchParticles({ lifetime })}
+            />
+            <ParamSlider
+              id="particle-size"
+              label="Point size"
+              value={particleWeather.size}
+              min={0.8}
+              max={6}
+              step={0.1}
+              format={(v) => v.toFixed(1)}
+              onChange={(size) => patchParticles({ size })}
+            />
+            <ToggleRow
+              label="Prefer valleys"
+              checked={particleWeather.valleyBias}
+              onChange={(valleyBias) => patchParticles({ valleyBias })}
+            />
+
+            <div className="side-panel__section">Vector field</div>
+            <div className="side-panel__field">
+              <label className="side-panel__label" htmlFor="particle-field">Field</label>
+              <select
+                id="particle-field"
+                className="side-panel__select"
+                value={particleWeather.fieldMode}
+                onChange={(e) => patchParticles({ fieldMode: e.target.value as FieldMode })}
+              >
+                {FIELD_MODES.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </div>
+            <p className="side-panel__hint">
+              Downhill uses −∇height from the heightmap. Curl noise is procedural wind. Vortex spins around the origin.
+            </p>
+            <ParamSlider
+              id="particle-field-str"
+              label="Field strength"
+              value={particleWeather.fieldStrength}
+              min={0}
+              max={4}
+              step={0.1}
+              format={(v) => v.toFixed(1)}
+              onChange={(fieldStrength) => patchParticles({ fieldStrength })}
+            />
+            <ParamSlider
+              id="particle-wind-x"
+              label="Wind X"
+              value={particleWeather.windX}
+              min={-2}
+              max={2}
+              step={0.05}
+              format={(v) => v.toFixed(2)}
+              onChange={(windX) => patchParticles({ windX })}
+            />
+            <ParamSlider
+              id="particle-wind-z"
+              label="Wind Z"
+              value={particleWeather.windZ}
+              min={-2}
+              max={2}
+              step={0.05}
+              format={(v) => v.toFixed(2)}
+              onChange={(windZ) => patchParticles({ windZ })}
+            />
+            <ToggleRow
+              label="Show field arrows"
+              checked={particleWeather.showField}
+              onChange={(showField) => patchParticles({ showField })}
+            />
+
+            <div className="side-panel__section">Forces</div>
+            <ParamSlider
+              id="particle-gravity"
+              label="Gravity"
+              value={particleWeather.gravity}
+              min={0}
+              max={2.5}
+              step={0.05}
+              format={(v) => v.toFixed(2)}
+              onChange={(gravity) => patchParticles({ gravity })}
+            />
+            <ParamSlider
+              id="particle-drag"
+              label="Drag"
+              value={particleWeather.drag}
+              min={0}
+              max={0.4}
+              step={0.01}
+              format={(v) => v.toFixed(2)}
+              onChange={(drag) => patchParticles({ drag })}
+            />
+
+            <div className="side-panel__section">Trails</div>
+            <ToggleRow
+              label="Draw trails"
+              checked={particleWeather.showTrails}
+              onChange={(showTrails) => patchParticles({ showTrails })}
+            />
+            {particleWeather.showTrails && (
+              <ParamSlider
+                id="particle-trail-len"
+                label="Trail length"
+                value={particleWeather.trailLength}
+                min={3}
+                max={16}
+                step={1}
+                onChange={(trailLength) => patchParticles({ trailLength })}
+              />
+            )}
+          </>
+        )}
+
+        {/* Below Class 06 module: Environment (2nd last), Camera (last) */}
         {section('environment', 'Environment', (
           <>
-            <ToggleRow label="Fog" checked={sceneParams.fog} onChange={(v) => updateScene('fog', v)} />
-
             <ParamSlider
               id="env-time"
               label="Time of Day"
@@ -468,29 +1022,8 @@ export default function SidePanel({
             >
               {environment.dayCycle ? '■ Pause Day Cycle' : '▶ Play Day Cycle'}
             </button>
-
             <ParamSlider id="env-sun-azimuth" label="Sun Direction" value={environment.sunAzimuth} min={0} max={360} step={5} format={(v) => `${v}°`} onChange={(v) => updateEnvironment('sunAzimuth', v)} />
             <ParamSlider id="env-sun-intensity" label="Sun Intensity" value={environment.sunIntensity} min={0} max={2} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => updateEnvironment('sunIntensity', v)} />
-
-            <span className="side-panel__label">Weather</span>
-            <nav className="sub-tabs" aria-label="Weather">
-              {WEATHERS.map((w) => (
-                <button
-                  key={w}
-                  type="button"
-                  className={`sub-tabs__button ${environment.weather === w ? 'sub-tabs__button--active' : ''}`}
-                  aria-pressed={environment.weather === w}
-                  onClick={() => onEnvironmentChange({ ...environment, weather: w, cloudCover: WEATHER_PRESETS[w].cloudCover })}
-                >
-                  {WEATHER_PRESETS[w].label}
-                </button>
-              ))}
-            </nav>
-
-            <ToggleRow label="Clouds" checked={environment.clouds} onChange={(v) => updateEnvironment('clouds', v)} />
-            {environment.clouds && (
-              <ParamSlider id="env-cloud-cover" label="Cloud Cover" value={environment.cloudCover} min={0} max={1} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => updateEnvironment('cloudCover', v)} />
-            )}
           </>
         ))}
 
@@ -512,28 +1045,23 @@ export default function SidePanel({
             <PlannedRow label="Journey" />
           </>
         ))}
-
-        {section('world', 'World', (
-          <>
-            <PlannedRow label="Vegetation" />
-            <PlannedRow label="Settlement" />
-          </>
-        ))}
       </aside>
     )
   }
 
   // ═══════════════════════════════════════
   // 2D Terrain — generate, simulate, edit
+  // Flat tabs like 3D World (Terrain / Scatter / …): content swaps below, no accordion.
   // ═══════════════════════════════════════
   const simulationVisible = subTab === 'simulation'
 
   return (
     <aside className="side-panel" aria-label="2D terrain controls">
-      <nav className="sub-tabs" aria-label="2D canvas">
+      <nav className="sub-tabs sub-tabs--world" aria-label="2D canvas">
         <button
           type="button"
           className={`sub-tabs__button ${subTab === 'noise' ? 'sub-tabs__button--active' : ''}`}
+          aria-pressed={subTab === 'noise'}
           onClick={() => onSubTabChange('noise')}
         >
           Noise
@@ -541,237 +1069,217 @@ export default function SidePanel({
         <button
           type="button"
           className={`sub-tabs__button ${subTab === 'simulation' ? 'sub-tabs__button--active' : ''}`}
+          aria-pressed={subTab === 'simulation'}
           onClick={() => onSubTabChange('simulation')}
         >
           Simulation
         </button>
       </nav>
 
-      {!simulationVisible && section('layers', 'Layers', (
-        <>
-          <div className="layer-list">
-            {layers.map((layer, idx) => {
-              const isExpanded = expandedLayer === layer.id
-              const fractal = usesFractal(layer.params.type)
-              const cellular = usesCellular(layer.params.type)
-              const isDomainWarp = layer.params.type === 'domainWarp'
-              const info = NOISE_TYPES.find((t) => t.value === layer.params.type)
-              const shapingInfo = SHAPING_OPS.find((s) => s.value === layer.shaping.op)
+      {!simulationVisible && activeNoise && (() => {
+        const layer = activeNoise
+        const idx = activeNoiseIndex
+        const fractal = usesFractalControls(layer.params.type)
+        const cellular = usesCellular(layer.params.type)
+        const showWarp = usesWarpControls(layer.shaping)
+        const info = NOISE_TYPES.find((t) => t.value === layer.params.type)
+        const shapingInfo = SHAPING_OPS.find((s) => s.value === layer.shaping.op)
+        const class03Shaping = SHAPING_OPS.filter((s) => s.group === 'class03')
+        const extraShaping = SHAPING_OPS.filter((s) => s.group === 'extra')
 
-              return (
-                <div
-                  key={layer.id}
-                  className={`layer-card ${isExpanded ? 'layer-card--expanded' : ''}`}
+        return (
+          <>
+            <p className="side-panel__hint">
+              Class 03: pick a noise equation, then a shaping modifier. Layers blend into one heightmap.
+            </p>
+
+            {layers.length > 1 && (
+              <div className="side-panel__field">
+                <label className="side-panel__label" htmlFor="noise-active-layer">Edit layer</label>
+                <select
+                  id="noise-active-layer"
+                  className="side-panel__select"
+                  value={layer.id}
+                  onChange={(e) => setSelectedNoiseId(e.target.value)}
                 >
-                  <div className="layer-card__header">
-                    <label className="side-panel__toggle layer-card__vis">
-                      <input
-                        type="checkbox"
-                        checked={layer.visible}
-                        onChange={(e) => updateLayer(layer.id, { visible: e.target.checked })}
-                      />
-                      <span className="side-panel__toggle-track" />
-                    </label>
+                  {layers.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
-                    <button
-                      type="button"
-                      className="layer-card__name"
-                      onClick={() => setExpandedLayer(isExpanded ? null : layer.id)}
-                    >
-                      {layer.name}
-                    </button>
+            {idx > 0 && (
+              <ParamSlider
+                id={`opacity-${layer.id}`}
+                label="Mix strength"
+                value={layer.opacity}
+                min={0}
+                max={1}
+                step={0.05}
+                format={(v) => v.toFixed(2)}
+                onChange={(v) => updateLayer(layer.id, { opacity: v })}
+              />
+            )}
 
-                    <span className="layer-card__type">{layer.params.type}</span>
+            <div className="side-panel__section">Noise equation</div>
+            <div className="side-panel__field">
+              <label className="side-panel__label" htmlFor={`type-${layer.id}`}>Equation</label>
+              <select
+                id={`type-${layer.id}`}
+                className="side-panel__select"
+                value={layer.params.type}
+                onChange={(e) => updateLayerParams(layer.id, { type: e.target.value as NoiseParams['type'] })}
+              >
+                {NOISE_GROUPS.map((g) => (
+                  <optgroup key={g} label={g}>
+                    {NOISE_TYPES.filter((t) => t.group === g).map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            {info && <p className="side-panel__hint">{info.description}</p>}
 
-                    <div className="layer-card__actions">
-                      <button type="button" title="Move up" disabled={idx === 0} onClick={() => moveLayer(layer.id, -1)}>↑</button>
-                      <button type="button" title="Move down" disabled={idx === layers.length - 1} onClick={() => moveLayer(layer.id, 1)}>↓</button>
-                      <button type="button" title="Remove" disabled={layers.length <= 1} onClick={() => removeLayer(layer.id)}>×</button>
-                    </div>
-                  </div>
+            <div className="side-panel__section">Shaping</div>
+            <div className="side-panel__field">
+              <label className="side-panel__label" htmlFor={`shaping-${layer.id}`}>Modifier</label>
+              <select
+                id={`shaping-${layer.id}`}
+                className="side-panel__select"
+                value={layer.shaping.op}
+                onChange={(e) => updateLayerShaping(layer.id, { op: e.target.value as ShapingParams['op'] })}
+              >
+                <optgroup label="Class 03">
+                  {class03Shaping.map((s) => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Extra">
+                  {extraShaping.map((s) => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
+            {shapingInfo && layer.shaping.op !== 'none' && (
+              <p className="side-panel__hint">{shapingInfo.description}</p>
+            )}
+            {layer.shaping.op === 'power' && (
+              <ParamSlider id={`shp-pow-${layer.id}`} label="Exponent" value={layer.shaping.power} min={0.1} max={6} step={0.1} format={(v) => v.toFixed(1)} onChange={(v) => updateLayerShaping(layer.id, { power: v })} />
+            )}
+            {layer.shaping.op === 'smoothstep' && (
+              <>
+                <ParamSlider id={`shp-ssmin-${layer.id}`} label="Edge Min" value={layer.shaping.smoothstepMin} min={0} max={0.9} step={0.01} format={(v) => v.toFixed(2)} onChange={(v) => updateLayerShaping(layer.id, { smoothstepMin: v })} />
+                <ParamSlider id={`shp-ssmax-${layer.id}`} label="Edge Max" value={layer.shaping.smoothstepMax} min={0.1} max={1} step={0.01} format={(v) => v.toFixed(2)} onChange={(v) => updateLayerShaping(layer.id, { smoothstepMax: v })} />
+              </>
+            )}
+            {layer.shaping.op === 'terrace' && (
+              <ParamSlider id={`shp-ter-${layer.id}`} label="Steps" value={layer.shaping.terraceSteps} min={2} max={20} onChange={(v) => updateLayerShaping(layer.id, { terraceSteps: v })} />
+            )}
+            {layer.shaping.op === 'clamp' && (
+              <>
+                <ParamSlider id={`shp-clmin-${layer.id}`} label="Clamp Min" value={layer.shaping.clampMin} min={0} max={0.9} step={0.01} format={(v) => v.toFixed(2)} onChange={(v) => updateLayerShaping(layer.id, { clampMin: v })} />
+                <ParamSlider id={`shp-clmax-${layer.id}`} label="Clamp Max" value={layer.shaping.clampMax} min={0.1} max={1} step={0.01} format={(v) => v.toFixed(2)} onChange={(v) => updateLayerShaping(layer.id, { clampMax: v })} />
+              </>
+            )}
+            {layer.shaping.op === 'quantize' && (
+              <ParamSlider id={`shp-qnt-${layer.id}`} label="Levels" value={layer.shaping.quantizeLevels} min={2} max={16} onChange={(v) => updateLayerShaping(layer.id, { quantizeLevels: v })} />
+            )}
 
-                  {isExpanded && (
-                    <div className="layer-card__body">
-                      {idx > 0 && (
-                        <>
-                          <div className="side-panel__section">Blend</div>
-                          <div className="side-panel__field">
-                            <label className="side-panel__label" htmlFor={`blend-${layer.id}`}>Mode</label>
-                            <select id={`blend-${layer.id}`} className="side-panel__select" value={layer.blendMode} onChange={(e) => updateLayer(layer.id, { blendMode: e.target.value as NoiseLayer['blendMode'] })}>
-                              {BLEND_MODES.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
-                            </select>
-                          </div>
-                          <ParamSlider id={`opacity-${layer.id}`} label="Opacity" value={layer.opacity} min={0} max={1} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => updateLayer(layer.id, { opacity: v })} />
-                        </>
-                      )}
+            <div className="side-panel__section">Parameters</div>
+            <ParamSlider id={`scale-${layer.id}`} label="Scale" value={layer.params.scale} min={0.5} max={60} step={0.5} format={(v) => v.toFixed(1)} onChange={(v) => updateLayerParams(layer.id, { scale: v })} />
+            <ToggleRow label="Invert" checked={layer.params.invert} onChange={(invert) => updateLayerParams(layer.id, { invert })} />
 
-                      <div className="side-panel__section">Type</div>
-                      <div className="side-panel__field">
-                        <label className="side-panel__label" htmlFor={`type-${layer.id}`}>Noise Type</label>
-                        <select id={`type-${layer.id}`} className="side-panel__select" value={layer.params.type} onChange={(e) => updateLayerParams(layer.id, { type: e.target.value as NoiseParams['type'] })}>
-                          {NOISE_GROUPS.map((g) => (
-                            <optgroup key={g} label={g}>
-                              {NOISE_TYPES.filter((t) => t.group === g).map((t) => (
-                                <option key={t.value} value={t.value}>{t.label}</option>
-                              ))}
-                            </optgroup>
-                          ))}
-                        </select>
-                      </div>
-                      {info && <p className="side-panel__hint">{info.description}</p>}
+            {fractal && (
+              <>
+                <ParamSlider id={`oct-${layer.id}`} label="Octaves" value={layer.params.octaves} min={1} max={10} onChange={(v) => updateLayerParams(layer.id, { octaves: v })} />
+                <ParamSlider id={`per-${layer.id}`} label="Persistence" value={layer.params.persistence} min={0.05} max={0.95} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => updateLayerParams(layer.id, { persistence: v })} />
+                <ParamSlider id={`lac-${layer.id}`} label="Lacunarity" value={layer.params.lacunarity} min={1.2} max={4} step={0.1} format={(v) => v.toFixed(1)} onChange={(v) => updateLayerParams(layer.id, { lacunarity: v })} />
+              </>
+            )}
 
-                      <div className="side-panel__section">Shape</div>
-                      <ParamSlider id={`scale-${layer.id}`} label="Scale" value={layer.params.scale} min={0.5} max={60} step={0.5} format={(v) => v.toFixed(1)} onChange={(v) => updateLayerParams(layer.id, { scale: v })} />
-                      <ParamSlider id={`power-${layer.id}`} label="Power" value={layer.params.power} min={0.2} max={5} step={0.1} format={(v) => v.toFixed(1)} onChange={(v) => updateLayerParams(layer.id, { power: v })} />
-                      <div className="side-panel__field">
-                        <div className="side-panel__row">
-                          <span className="side-panel__label">Invert</span>
-                          <label className="side-panel__toggle">
-                            <input type="checkbox" checked={layer.params.invert} onChange={(e) => updateLayerParams(layer.id, { invert: e.target.checked })} />
-                            <span className="side-panel__toggle-track" />
-                          </label>
-                        </div>
-                      </div>
+            {showWarp && (
+              <ParamSlider id={`warp-${layer.id}`} label="Warp Strength" value={layer.params.warpStrength} min={0} max={12} step={0.2} format={(v) => v.toFixed(1)} onChange={(v) => updateLayerParams(layer.id, { warpStrength: v })} />
+            )}
 
-                      <div className="side-panel__section">Shaping</div>
-                      <div className="side-panel__field">
-                        <label className="side-panel__label" htmlFor={`shaping-${layer.id}`}>Operation</label>
-                        <select id={`shaping-${layer.id}`} className="side-panel__select" value={layer.shaping.op} onChange={(e) => updateLayerShaping(layer.id, { op: e.target.value as ShapingParams['op'] })}>
-                          {SHAPING_OPS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                        </select>
-                      </div>
-                      {shapingInfo && layer.shaping.op !== 'none' && (
-                        <p className="side-panel__hint">{shapingInfo.description}</p>
-                      )}
-                      {layer.shaping.op === 'power' && (
-                        <ParamSlider id={`shp-pow-${layer.id}`} label="Exponent" value={layer.shaping.power} min={0.1} max={6} step={0.1} format={(v) => v.toFixed(1)} onChange={(v) => updateLayerShaping(layer.id, { power: v })} />
-                      )}
-                      {layer.shaping.op === 'smoothstep' && (
-                        <>
-                          <ParamSlider id={`shp-ssmin-${layer.id}`} label="Edge Min" value={layer.shaping.smoothstepMin} min={0} max={0.9} step={0.01} format={(v) => v.toFixed(2)} onChange={(v) => updateLayerShaping(layer.id, { smoothstepMin: v })} />
-                          <ParamSlider id={`shp-ssmax-${layer.id}`} label="Edge Max" value={layer.shaping.smoothstepMax} min={0.1} max={1} step={0.01} format={(v) => v.toFixed(2)} onChange={(v) => updateLayerShaping(layer.id, { smoothstepMax: v })} />
-                        </>
-                      )}
-                      {layer.shaping.op === 'terrace' && (
-                        <ParamSlider id={`shp-ter-${layer.id}`} label="Steps" value={layer.shaping.terraceSteps} min={2} max={20} onChange={(v) => updateLayerShaping(layer.id, { terraceSteps: v })} />
-                      )}
-                      {layer.shaping.op === 'clamp' && (
-                        <>
-                          <ParamSlider id={`shp-clmin-${layer.id}`} label="Clamp Min" value={layer.shaping.clampMin} min={0} max={0.9} step={0.01} format={(v) => v.toFixed(2)} onChange={(v) => updateLayerShaping(layer.id, { clampMin: v })} />
-                          <ParamSlider id={`shp-clmax-${layer.id}`} label="Clamp Max" value={layer.shaping.clampMax} min={0.1} max={1} step={0.01} format={(v) => v.toFixed(2)} onChange={(v) => updateLayerShaping(layer.id, { clampMax: v })} />
-                        </>
-                      )}
-                      {layer.shaping.op === 'quantize' && (
-                        <ParamSlider id={`shp-qnt-${layer.id}`} label="Levels" value={layer.shaping.quantizeLevels} min={2} max={16} onChange={(v) => updateLayerShaping(layer.id, { quantizeLevels: v })} />
-                      )}
-
-                      {fractal && (
-                        <>
-                          <div className="side-panel__section">Fractal</div>
-                          <ParamSlider id={`oct-${layer.id}`} label="Octaves" value={layer.params.octaves} min={1} max={10} onChange={(v) => updateLayerParams(layer.id, { octaves: v })} />
-                          <ParamSlider id={`per-${layer.id}`} label="Persistence" value={layer.params.persistence} min={0.05} max={0.95} step={0.05} format={(v) => v.toFixed(2)} onChange={(v) => updateLayerParams(layer.id, { persistence: v })} />
-                          <ParamSlider id={`lac-${layer.id}`} label="Lacunarity" value={layer.params.lacunarity} min={1.2} max={4} step={0.1} format={(v) => v.toFixed(1)} onChange={(v) => updateLayerParams(layer.id, { lacunarity: v })} />
-                        </>
-                      )}
-
-                      {isDomainWarp && (
-                        <>
-                          <div className="side-panel__section">Warp</div>
-                          <ParamSlider id={`warp-${layer.id}`} label="Warp Strength" value={layer.params.warpStrength} min={0} max={12} step={0.2} format={(v) => v.toFixed(1)} onChange={(v) => updateLayerParams(layer.id, { warpStrength: v })} />
-                        </>
-                      )}
-
-                      {cellular && (
-                        <>
-                          <div className="side-panel__section">Cellular</div>
-                          <div className="side-panel__field">
-                            <label className="side-panel__label" htmlFor={`dist-${layer.id}`}>Distance</label>
-                            <select id={`dist-${layer.id}`} className="side-panel__select" value={layer.params.distanceMetric} onChange={(e) => updateLayerParams(layer.id, { distanceMetric: e.target.value as NoiseParams['distanceMetric'] })}>
-                              {DISTANCE_METRICS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                            </select>
-                          </div>
-                          {layer.params.type === 'worley' && (
-                            <div className="side-panel__field">
-                              <label className="side-panel__label" htmlFor={`cell-${layer.id}`}>Return</label>
-                              <select id={`cell-${layer.id}`} className="side-panel__select" value={layer.params.cellReturn} onChange={(e) => updateLayerParams(layer.id, { cellReturn: e.target.value as NoiseParams['cellReturn'] })}>
-                                {CELL_RETURNS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                              </select>
-                            </div>
-                          )}
-                        </>
-                      )}
-
-                      <div className="side-panel__section">Seed</div>
-                      <div className="side-panel__field">
-                        <div className="side-panel__row">
-                          <span className="side-panel__label">Value</span>
-                          <span className="side-panel__value">{layer.params.seed}</span>
-                        </div>
-                        <button type="button" className="side-panel__button" onClick={() => updateLayerParams(layer.id, { seed: Math.floor(Math.random() * 100000) })}>
-                          Randomize
-                        </button>
-                      </div>
-                    </div>
-                  )}
+            {cellular && (
+              <>
+                <div className="side-panel__field">
+                  <label className="side-panel__label" htmlFor={`dist-${layer.id}`}>Distance</label>
+                  <select id={`dist-${layer.id}`} className="side-panel__select" value={layer.params.distanceMetric} onChange={(e) => updateLayerParams(layer.id, { distanceMetric: e.target.value as NoiseParams['distanceMetric'] })}>
+                    {DISTANCE_METRICS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
                 </div>
-              )
-            })}
-          </div>
+                {layer.params.type === 'worley' && (
+                  <div className="side-panel__field">
+                    <label className="side-panel__label" htmlFor={`cell-${layer.id}`}>Return</label>
+                    <select id={`cell-${layer.id}`} className="side-panel__select" value={layer.params.cellReturn} onChange={(e) => updateLayerParams(layer.id, { cellReturn: e.target.value as NoiseParams['cellReturn'] })}>
+                      {CELL_RETURNS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+                )}
+              </>
+            )}
 
-          <div className="side-panel__field">
-            <button type="button" className="side-panel__button side-panel__button--accent" onClick={addLayer}>
-              + Add Layer
-            </button>
-            <button type="button" className="side-panel__button" onClick={onLoadPreset}>
-              Load Calibrated Terrain
-            </button>
-          </div>
-        </>
-      ))}
+            <div className="side-panel__section">Seed</div>
+            <div className="side-panel__field">
+              <div className="side-panel__row">
+                <span className="side-panel__label">Value</span>
+                <span className="side-panel__value">{layer.params.seed}</span>
+              </div>
+              <button type="button" className="side-panel__button" onClick={() => updateLayerParams(layer.id, { seed: Math.floor(Math.random() * 100000) })}>
+                Randomize
+              </button>
+            </div>
 
-      {!simulationVisible && section('noiseOutput', 'Heightmap Output', (
+            <div className="side-panel__section">Output</div>
+            <ParamSlider
+              id="noise-field-size"
+              label="Heightmap Resolution"
+              value={sceneParams.noiseFieldSize}
+              min={32}
+              max={1024}
+              step={32}
+              format={(v) => `${v}²`}
+              onChange={(v) => updateScene('noiseFieldSize', v)}
+            />
+            <div className="side-panel__row">
+              <span className="side-panel__label">Map Offset</span>
+              <span className="side-panel__value">
+                {mapOffset.x.toFixed(2)}, {mapOffset.y.toFixed(2)}
+              </span>
+            </div>
+            <div className="side-panel__row">
+              <span className="side-panel__hint">Arrow keys scroll · Shift = fast</span>
+              <button
+                type="button"
+                className="side-panel__button"
+                onClick={onResetOffset}
+                disabled={mapOffset.x === 0 && mapOffset.y === 0}
+              >
+                Recenter
+              </button>
+            </div>
+
+            <div className="side-panel__field side-panel__row">
+              <button type="button" className="side-panel__button" style={{ flex: 1 }} onClick={onLoadPreset}>
+                Reset Preset
+              </button>
+              <button type="button" className="side-panel__button side-panel__button--accent" style={{ flex: 1 }} onClick={onApply}>
+                Send to 3D
+              </button>
+            </div>
+          </>
+        )
+      })()}
+
+      {simulationVisible && (
         <>
-          <ParamSlider
-            id="noise-field-size"
-            label="Heightmap Resolution"
-            value={sceneParams.noiseFieldSize}
-            min={32}
-            max={1024}
-            step={32}
-            format={(v) => `${v}²`}
-            onChange={(v) => updateScene('noiseFieldSize', v)}
-          />
-          <p className="side-panel__hint">
-            Pixel size of the noise heightmap sent to 3D.
-            {hasAppliedMap && appliedSource === 'noise' ? ' Send again to update 3D.' : ''}
-          </p>
-          <div className="side-panel__row">
-            <span className="side-panel__label">Map Offset</span>
-            <span className="side-panel__value">
-              {mapOffset.x.toFixed(2)}, {mapOffset.y.toFixed(2)}
-            </span>
-          </div>
-          <div className="side-panel__row">
-            <span className="side-panel__hint">Arrow keys scroll · Shift = fast</span>
-            <button
-              type="button"
-              className="side-panel__button"
-              onClick={onResetOffset}
-              disabled={mapOffset.x === 0 && mapOffset.y === 0}
-            >
-              Recenter
-            </button>
-          </div>
-          <div className="side-panel__field">
-            <button type="button" className="side-panel__button side-panel__button--accent" onClick={onApply}>
-              Send Noise to 3D
-            </button>
-          </div>
-        </>
-      ))}
-
-      {simulationVisible && section('simulation', 'Hydraulic Erosion', (
-        <>
+          <div className="side-panel__section">Hydraulic Erosion</div>
           <p className="side-panel__hint">
             Erodes the current noise layers. Progress is kept when you switch views.
           </p>
@@ -854,7 +1362,7 @@ export default function SidePanel({
           <ParamSlider id="ero-minspeed" label="Min Slope" value={erosionParams.minSpeed} min={0.001} max={0.1} step={0.001} format={(v) => v.toFixed(3)} onChange={(v) => updateErosion('minSpeed', v)} />
           <ParamSlider id="ero-mapsize" label="Map Size" value={erosionParams.mapSize} min={64} max={1024} step={64} format={(v) => `${v}px`} onChange={(v) => updateErosion('mapSize', v)} />
         </>
-      ))}
+      )}
 
       {section('analysis', 'Analysis', (
         <>
@@ -867,7 +1375,10 @@ export default function SidePanel({
           <PlannedRow label="Sediment" />
 
           <div className="side-panel__field">
-            <label className="side-panel__label" htmlFor="analysis-color">Height Color</label>
+            <label className="side-panel__label" htmlFor="analysis-color">Preview tint</label>
+            <p className="side-panel__hint">
+              Display only — noise itself is always a 0…1 grayscale height. Gray matches Class 03.
+            </p>
             {simulationVisible ? (
               <select id="analysis-color" className="side-panel__select" value={erosionColorMode} onChange={(e) => onErosionColorModeChange(e.target.value as ColorMode)}>
                 {COLOR_MODES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}

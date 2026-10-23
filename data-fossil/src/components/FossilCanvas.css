@@ -1,0 +1,76 @@
+.fossil-canvas {
+  position: relative;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  overflow: hidden;
+  background: #e4e2de;
+}
+
+.fossil-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.fossil-label-layer {
+  position: absolute !important;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.fossil-map-label {
+  font-family: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #2c2b29;
+  background: rgba(236, 235, 232, 0.92);
+  border: 1px solid #c49a5a;
+  padding: 2px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.fossil-axis-label {
+  font-family: 'IBM Plex Mono', Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  user-select: none;
+  pointer-events: none;
+  text-shadow: 0 0 4px rgba(228, 226, 222, 0.9);
+}
+
+.fossil-world-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6a6762;
+  background: rgba(228, 226, 222, 0.88);
+  border: 1px solid #b8b5af;
+  padding: 3px 8px;
+  border-radius: 2px;
+  user-select: none;
+  pointer-events: none;
+}
+
+.fossil-planet-label {
+  font-family: 'IBM Plex Mono', Consolas, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #2c2b29;
+  background: rgba(236, 235, 232, 0.9);
+  border: 1px solid #c49a5a;
+  padding: 2px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}

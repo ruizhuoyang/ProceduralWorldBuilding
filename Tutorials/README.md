@@ -8,26 +8,31 @@ Study notes for DESIGN 6197/4197 — work through classes in order.
 |---|--------|----------------|
 | 01 | [The terminal](Class-01-Terminal/README.md) | `cd`, Node/npm checks, run the app |
 | 02 | [Node, npm, React, TypeScript](Class-02-Node-React-TypeScript/README.md) | Toolchain and React + Three UI |
-| 03 | [Noise / Perlin / fBm](Class-03-Noise/README.md) | Heightmaps and hydraulic erosion |
+| 03 | [Noise / equation + shaping / fBm](Class-03-Noise/README.md) | Heightmaps and hydraulic erosion |
 | 04 | [Voxel](Class-04-Voxel/README.md) | Density, CSG, Marching Cubes, heightfield hydrology |
 | 05 | [Shader](Class-05-Shader/README.md) | Water GLSL: deform, contact, ripple, particles |
+| 06 | [Distributions](Class-06-Distributions/README.md) | Scatter layers, spline paths, particles / vector fields |
 
 ## How this maps to the app
 
 | App view | Classes |
 |----------|---------|
 | Terminal / `npm run dev` | 01–02 |
-| **2D Terrain** | 03 |
-| **3D World** | 03 (apply map) + [Project/environment](../Project/environment.md) |
+| **2D Terrain** | 03 — noise equation + shaping, erosion |
+| **3D World** | 03 (apply map) + [Project/environment](../Project/environment.md) + **06** |
+| **3D World → Terrain / Scatter / Splines / Particles** | 06 — A1–A3 ready |
 | **Voxel Terrain → Field** | 04 (density + rain / slope flow) |
 | **Voxel Terrain → Water Shaders** | 05 (GLSL on free-surface water) |
+| **Data Fossil** (final project) | 03 noise + 04 3D fBm + 05 height tint + 06 landforms / particles / orbits — [data-fossil/README.md](../data-fossil/README.md) |
 
-## Live site
+## Live sites
 
-Firebase Hosting: https://procedural-world-buildin-f602c.web.app
+- Course world: https://procedural-world-buildin-f602c.web.app
+- Data Fossil: https://pwb-data-fossil.web.app
 
 ## Screenshots
 
-Shared images: [`../Docs/assets/`](../Docs/assets/).
+Shared course images: [`../Docs/assets/`](../Docs/assets/).  
+Final project shots: [`../data-fossil/docs/assets/`](../data-fossil/docs/assets/).
 
 Back to [vault README](../README.md).

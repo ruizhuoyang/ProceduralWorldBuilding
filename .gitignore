@@ -1,17 +1,49 @@
-# Logs / OS
-*.log
+# OS
 .DS_Store
 Thumbs.db
+Desktop.ini
 
-# Accidental installs at vault root (app deps live in my-react-app/)
-/node_modules/
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+firebase-debug.log*
+firestore-debug.log*
 
-# Env
-*.local
+# Secrets / local env (keep .env.example)
 .env
 .env.*
+*.local
 !.env.example
 
-# Build / editor
+# Dependencies and builds (apps live in my-react-app/ and data-fossil/)
+node_modules/
 dist/
+dist-ssr/
+*.tsbuildinfo
+
+# Firebase Hosting cache (keep firebase.json and .firebaserc)
 .firebase/
+
+# Cursor / VS Code / JetBrains
+.cursor/
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Obsidian session state (keep app / appearance / core-plugins)
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/graph.json
+.obsidian/cache/
+
+# Tool caches
+.cache/
+.vite/
+coverage/

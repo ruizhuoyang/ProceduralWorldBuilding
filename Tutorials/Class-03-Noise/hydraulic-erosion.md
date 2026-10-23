@@ -1,4 +1,4 @@
-﻿# Hydraulic erosion
+# Hydraulic erosion
 
 ## What
 
@@ -31,6 +31,8 @@ Each `stepErosion` simulates `dropletsPerStep` particles with lifetime, friction
 - Loop + live sync: [`App.tsx`](../../my-react-app/src/App.tsx)
 
 ## Screenshot
+
+### 2D Terrain — Hydraulic erosion
 
 ![Erosion simulation](../../Docs/assets/03-erosion.png)
 
