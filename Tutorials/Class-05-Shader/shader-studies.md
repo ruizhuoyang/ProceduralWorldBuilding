@@ -49,5 +49,3 @@ flowchart LR
 
 - [Voxel hydrology](../Class-04-Voxel/voxel-hydrology.md)
 - Class 05 PDF — Contact Shaders, Vertex displacement, Assignment 2
-
-Back to [Class 05 README](README.md).

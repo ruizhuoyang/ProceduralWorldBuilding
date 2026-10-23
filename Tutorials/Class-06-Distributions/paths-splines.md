@@ -70,7 +70,6 @@ Bevy-style PCG panel:
 
 ## Related
 
-- [Class 06 README](README.md)
 - Previous: [scattering.md](scattering.md)
 - Next: [particles-vector-fields.md](particles-vector-fields.md)
-- Height sampling: [Class 03](../Class-03-Noise/README.md), terrain apply in 3D World
+- Height sampling: [Class 03](../Class-03-Noise/README.md)

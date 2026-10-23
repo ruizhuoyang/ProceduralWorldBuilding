@@ -1,10 +1,10 @@
 # Data Fossil
 
+Final project for **DESIGN 6197/4197 — Fall 2026**.
+
 An interactive 3D web project: a number you care about becomes a unique digital rock.
 
 **Live:** https://pwb-data-fossil.web.app
-
----
 
 ## Concept
 
@@ -18,8 +18,6 @@ Visitors enter a number sequence to generate a digital rock. Individual digits s
 
 By bringing geological time into a digital medium, Data Fossil questions the promise of digital eternity and explores what survives when data remains, but its meaning is no longer accessible.
 
----
-
 ## How to use
 
 **View** — the rock spins; there is no editor. Bottom-right: look around inside the stone, or open a stellar system of saved fossils.
@@ -31,8 +29,6 @@ By bringing geological time into a digital medium, Data Fossil questions the pro
 **Save** — stores a thumbnail in the tray (max 12). Click a thumbnail to load that fossil. **Export STL** downloads the mesh.
 
 Reload the page to return to the default **1208** rock. Saved fossils stay in the tray; they are not applied until you click one.
-
----
 
 ## Gallery
 
@@ -60,9 +56,7 @@ Saved fossils orbit a star.
 
 ![Stellar system](docs/assets/05-stellar.png)
 
----
-
-## Run locally
+## Run
 
 ```powershell
 cd data-fossil
@@ -72,15 +66,9 @@ npm run dev
 
 Open **http://localhost:5173/**
 
----
-
 ## Deploy
 
-Data Fossil is a static Firebase Hosting site on the same project as the course world (`procedural-world-buildin-f602c`), but a **second site**, so it does not overwrite https://procedural-world-buildin-f602c.web.app.
-
-Hosting config lives in this folder: [`firebase.json`](firebase.json) and [`.firebaserc`](.firebaserc). Site id: `pwb-data-fossil`. No Auth or Firestore.
-
-### After you change the code
+Firebase Hosting site `pwb-data-fossil` (this folder: `firebase.json`, `.firebaserc`). No Auth or Firestore.
 
 ```powershell
 cd data-fossil

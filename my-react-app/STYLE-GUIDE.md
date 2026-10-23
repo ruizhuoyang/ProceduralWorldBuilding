@@ -157,7 +157,7 @@ Visual language for the app UI. Inspired by **TouchDesigner** and **Max/MSP**: d
 
 ## CSS Variables (copy-ready)
 
-Add or align these in `my-react-app/src/index.css`:
+Add or align these in `src/index.css`:
 
 ```css
 :root {
@@ -223,12 +223,10 @@ Add or align these in `my-react-app/src/index.css`:
 
 | File | Role |
 |------|------|
-| `my-react-app/src/index.css` | Global tokens, base typography |
-| `my-react-app/src/App.css` | Shell layout (header, main) |
-| `my-react-app/src/components/SidePanel.css` | Parameter panel patterns |
-| `my-react-app/src/components/ThreeCanvas.css` | Viewport container (full bleed) |
-
-This guide lives at `Style-guides/STYLE-GUIDE.md` in the documentation vault.
+| `src/index.css` | Global tokens, base typography |
+| `src/App.css` | Shell layout (header, main) |
+| `src/components/SidePanel.css` | Parameter panel patterns |
+| `src/components/ThreeCanvas.css` | Viewport container (full bleed) |
 
 When adding new UI, create component-scoped CSS that **only uses tokens** from this guide — no hard-coded hex in component files.
 

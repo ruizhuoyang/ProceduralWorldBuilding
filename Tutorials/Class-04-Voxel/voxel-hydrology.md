@@ -63,5 +63,3 @@ Hint: keep resolution ≤ 48³ while running continuous rain.
 - [Marching Cubes](marching-cubes.md) (terrain only)
 - [Hydraulic erosion](../Class-03-Noise/hydraulic-erosion.md) (2D heightmap cousin)
 - [Class 05 shaders](../Class-05-Shader/README.md) (GLSL on this water sheet)
-
-Back to [Class 04 README](README.md).

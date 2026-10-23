@@ -69,6 +69,5 @@ flowchart LR
 
 ## Related
 
-- [Class 06 README](README.md)
 - Next: [paths-splines.md](paths-splines.md)
 - Masks: [noise-and-fbm.md](../Class-03-Noise/noise-and-fbm.md), [voxel-hydrology.md](../Class-04-Voxel/voxel-hydrology.md)

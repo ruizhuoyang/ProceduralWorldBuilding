@@ -53,7 +53,7 @@ flowchart LR
 - **UI:** **3D World → Particles** — Run particles, phenomenon presets, count / lifetime / size, field mode, trails, optional field arrows.
 - **Field:** coarse 2D vector grid (downhill −∇height, wind, vortex, curl noise); each frame velocity samples the field.
 - **Look:** soft point sprites + optional short trail LineSegments (no full fluid solver).
-- **Environment:** lighting stays in [Project/environment.md](../../Project/environment.md); weather motion lives here, not in Fog/Clouds UI.
+- **Environment:** lighting stays in [atmosphere.md](atmosphere.md); weather motion lives here, not in Fog/Clouds UI.
 
 ## Suggested acceptance criteria
 
@@ -74,7 +74,6 @@ flowchart LR
 
 ## Related
 
-- [Class 06 README](README.md)
 - Previous: [paths-splines.md](paths-splines.md)
+- Lighting: [atmosphere.md](atmosphere.md)
 - Rain / water points: [voxel-hydrology.md](../Class-04-Voxel/voxel-hydrology.md), [shader-studies.md](../Class-05-Shader/shader-studies.md)
-- Atmosphere: [../../Project/environment.md](../../Project/environment.md)

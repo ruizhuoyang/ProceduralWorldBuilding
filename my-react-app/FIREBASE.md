@@ -1,33 +1,17 @@
-# Firebase (Auth, Firestore, Hosting)
+# Firebase
 
-Course-app Hosting, Google Auth, and Firestore. **Data Fossil** is a separate Hosting site on the same Firebase project — see [data-fossil/README.md](../data-fossil/README.md#deploy). Do not deploy Data Fossil from `my-react-app/`.
+Hosting, Google Auth, and Firestore for **Procedural World**.
 
-## Quick setup checklist
+Google login saves plane scene params (resolution, noise field size, displacement, fog) to the signed-in user’s Firestore doc. Access control is via Firestore rules, not by hiding the Web config.
+
+## Quick setup
 
 1. `cd my-react-app` then `npm install`.
 2. Copy `.env.example` to `.env.local` and fill `VITE_FIREBASE_*` from Firebase console → Project settings → Your apps.
-3. Publish [`my-react-app/firestore.rules`](../my-react-app/firestore.rules) (or deploy with Hosting below).
-4. Authentication → Authorized domains: add `localhost` and your Hosting domain.
-5. Local: `npm run dev` → Sign in → Save / Load.
-6. Deploy: `npm run build` then `firebase deploy --only hosting,firestore:rules` from `my-react-app`.
+3. Authentication → Authorized domains: add `localhost` and your Hosting domain.
+4. `npm run build` then `firebase deploy --only hosting,firestore:rules`.
 
-Google login saves plane scene params (resolution, noise field size, displacement, fog) to the signed-in user’s Firestore doc. Noise layers and erosion are not saved yet. Hosting serves Vite `dist/`.
-
-Access control is via Firestore rules, not by hiding the Web config.
-
----
-
-# Firebase Deployment Guide
-
-This document describes how to deploy **Procedural World Building** (Vite + React) to **Firebase Hosting**, with **Google Authentication** and **Firestore** rules for saved terrain settings.
-
-All commands assume your shell is in the app folder:
-
-```text
-my-react-app/
-```
-
----
+Commands below assume the shell is in `my-react-app/`.
 
 ## What gets deployed
 
@@ -38,7 +22,6 @@ my-react-app/
 
 The Firebase Web SDK config is **not** deployed as a secret file. It is **embedded at build time** from `VITE_*` environment variables (see [Environment variables](#environment-variables)).
 
----
 
 ## Prerequisites
 
@@ -56,7 +39,6 @@ The Firebase Web SDK config is **not** deployed as a secret file. It is **embedd
    - **Firestore Database** → create a database (production mode is fine; rules in this repo lock down access).
    - **Project settings** → **Your apps** → register a **Web** app if you have not already, and note the SDK config values.
 
----
 
 ## One-time local setup
 
@@ -128,7 +110,6 @@ In **Authentication → Settings → Authorized domains**, ensure:
 
 Add any custom domain after you connect it to Hosting.
 
----
 
 ## Local verification before deploy
 
@@ -146,7 +127,6 @@ Add any custom domain after you connect it to Hosting.
 
 If sign-in or save fails, fix Auth domains, env vars, and rules before deploying.
 
----
 
 ## Production build
 
@@ -164,7 +144,6 @@ Optional smoke test of the built bundle:
 npm run preview
 ```
 
----
 
 ## Deploy to Firebase
 
@@ -190,7 +169,6 @@ After a successful deploy, the CLI prints your **Hosting URL**.
 
 **This project:** https://procedural-world-buildin-f602c.web.app
 
----
 
 ## End-to-end deployment checklist
 
@@ -203,7 +181,6 @@ After a successful deploy, the CLI prints your **Hosting URL**.
 7. Open the Hosting URL → sign in → Save / Load terrain settings.
 8. If Auth fails on the live site, add the Hosting domain under **Authorized domains**.
 
----
 
 ## CI / GitHub Actions (optional pattern)
 
@@ -223,7 +200,6 @@ steps:
 
 Generate a CI token with `firebase login:ci` and store it as a secret. Adjust paths if the workflow runs from the repository root (`working-directory: my-react-app`).
 
----
 
 ## Troubleshooting
 
@@ -235,7 +211,6 @@ Generate a CI token with `firebase login:ci` and store it as a secret. Adjust pa
 | Blank page on refresh of deep links | Hosting rewrite missing | Confirm `firebase.json` has `"source": "**", "destination": "/index.html"`. |
 | Old UI after deploy | Browser or CDN cache | Hard refresh; Hosting updates are usually immediate. |
 
----
 
 ## Security notes
 
@@ -243,7 +218,6 @@ Generate a CI token with `firebase login:ci` and store it as a secret. Adjust pa
 - Never commit `.env.local` or service account JSON with admin privileges into git.
 - Restrict Firestore rules changes to reviewed updates in `firestore.rules`.
 
----
 
 ## Related files
 
@@ -255,9 +229,7 @@ Generate a CI token with `firebase login:ci` and store it as a secret. Adjust pa
 | `.env.example` | Template for local/production build env |
 | `src/firebase.ts` | App initialization from `VITE_*` vars |
 | `src/components/FirebaseControls.tsx` | Sign-in, Save, Load UI |
-| `FIREBASE-SETUP.md` | Short setup summary at repo root of `my-react-app` |
 
----
 
 ## Quick reference
 

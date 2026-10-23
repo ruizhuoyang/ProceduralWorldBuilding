@@ -1,37 +1,20 @@
 # Tutorials
 
-Study notes for DESIGN 6197/4197 — work through classes in order.
-
-## Classes
+Class 01–06 notes for the course app.
 
 | # | Class | What you learn |
 |---|--------|----------------|
 | 01 | [The terminal](Class-01-Terminal/README.md) | `cd`, Node/npm checks, run the app |
 | 02 | [Node, npm, React, TypeScript](Class-02-Node-React-TypeScript/README.md) | Toolchain and React + Three UI |
-| 03 | [Noise / equation + shaping / fBm](Class-03-Noise/README.md) | Heightmaps and hydraulic erosion |
-| 04 | [Voxel](Class-04-Voxel/README.md) | Density, CSG, Marching Cubes, heightfield hydrology |
-| 05 | [Shader](Class-05-Shader/README.md) | Water GLSL: deform, contact, ripple, particles |
-| 06 | [Distributions](Class-06-Distributions/README.md) | Scatter layers, spline paths, particles / vector fields |
-
-## How this maps to the app
+| 03 | [Noise](Class-03-Noise/README.md) | Heightmaps and hydraulic erosion |
+| 04 | [Voxel](Class-04-Voxel/README.md) | Density, CSG, Marching Cubes, hydrology |
+| 05 | [Shader](Class-05-Shader/README.md) | Water GLSL |
+| 06 | [Distributions](Class-06-Distributions/README.md) | Scatter, splines, particles |
 
 | App view | Classes |
 |----------|---------|
-| Terminal / `npm run dev` | 01–02 |
-| **2D Terrain** | 03 — noise equation + shaping, erosion |
-| **3D World** | 03 (apply map) + [Project/environment](../Project/environment.md) + **06** |
-| **3D World → Terrain / Scatter / Splines / Particles** | 06 — A1–A3 ready |
-| **Voxel Terrain → Field** | 04 (density + rain / slope flow) |
-| **Voxel Terrain → Water Shaders** | 05 (GLSL on free-surface water) |
-
-## Live site
-
-Course app: https://procedural-world-buildin-f602c.web.app
-
-The final project is a separate app: [Data Fossil](../data-fossil/README.md).
-
-## Screenshots
-
-Course images: [`../Docs/assets/`](../Docs/assets/).
-
-Back to [vault README](../README.md).
+| `npm run dev` | 01–02 |
+| **2D Terrain** | 03 |
+| **3D World** | 03 + [atmosphere](Class-06-Distributions/atmosphere.md) + 06 |
+| **Voxel Terrain → Field** | 04 |
+| **Voxel Terrain → Water Shaders** | 05 |

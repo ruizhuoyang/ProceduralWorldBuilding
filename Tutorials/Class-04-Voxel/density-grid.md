@@ -22,4 +22,4 @@ A uniform lattice is the simplest shared substrate for filling shapes, CSG, surf
 ## Related
 
 - [Chunking](chunking.md) — partitions cells of this lattice
-- [Density CSG](../Class-03-Noise/csg-density.md)
+- [Density CSG](csg-density.md)

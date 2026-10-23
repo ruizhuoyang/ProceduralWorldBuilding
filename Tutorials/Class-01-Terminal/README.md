@@ -56,4 +56,3 @@ npm run dev
 - Next: [Class 02 — Node, npm, React, TypeScript](../Class-02-Node-React-TypeScript/README.md)
 - App readme: [../../my-react-app/README.md](../../my-react-app/README.md)
 
-Back to [Tutorials](../README.md) · [Vault root](../../README.md)
