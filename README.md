@@ -44,7 +44,6 @@ React + TypeScript + Three.js under [`my-react-app/`](my-react-app/).
 | Note | Link |
 |------|------|
 | Course screenshots | [Docs/README.md](Docs/README.md) |
-| Analysis / critique | [Analysis-Critique/README.md](Analysis-Critique/README.md) |
 | Style guide | [Style-guides/README.md](Style-guides/README.md) |
 
 ---
@@ -154,7 +153,6 @@ my-react-app/             2. Course Vite app
 Project/                  2. Course architecture, atmosphere, Firebase
 data-fossil/              3. Final project (src, docs/assets, Hosting)
 Docs/                     4. Course screenshots
-Analysis-Critique/        4. Reflection
 Style-guides/             4. UI language
 ```
 
