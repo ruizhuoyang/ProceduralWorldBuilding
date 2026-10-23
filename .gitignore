@@ -37,11 +37,8 @@ dist-ssr/
 *.sln
 *.sw?
 
-# Obsidian session state (keep app / appearance / core-plugins)
-.obsidian/workspace.json
-.obsidian/workspace-mobile.json
-.obsidian/graph.json
-.obsidian/cache/
+# Obsidian (local vault settings; notes are the Markdown files)
+.obsidian/
 
 # Tool caches
 .cache/

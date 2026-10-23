@@ -158,4 +158,4 @@ Analysis-Critique/        4. Reflection
 Style-guides/             4. UI language
 ```
 
-Local-only (gitignored): `node_modules/`, `dist/`, `.firebase/`, `.cursor/`, Obsidian workspace.
+Local-only (gitignored): `node_modules/`, `dist/`, `.firebase/`, `.cursor/`, `.obsidian/`.
