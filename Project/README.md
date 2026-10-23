@@ -10,17 +10,15 @@ Notes about the procedural world application: architecture, atmosphere, and depl
 | [environment.md](environment.md) | Time of day, sun, day cycle |
 | [firebase.md](firebase.md) | Auth, Firestore, Hosting |
 
-## Live sites
+## Live site
 
-| App | URL |
-|-----|-----|
-| Course world | https://procedural-world-buildin-f602c.web.app |
-| Data Fossil | https://pwb-data-fossil.web.app |
+https://procedural-world-buildin-f602c.web.app
+
+The final project is a separate Hosting site. See [data-fossil/README.md](../data-fossil/README.md#deploy).
 
 ## Runnable app
 
-- [../my-react-app/](../my-react-app/) — Vite + React 19 + TypeScript + Three.js ([run](../my-react-app/README.md), [deploy](firebase.md))
-- [../data-fossil/](../data-fossil/) — final project, digits → unique rock ([README](../data-fossil/README.md#deploy))
+[../my-react-app/](../my-react-app/) — Vite + React 19 + TypeScript + Three.js ([run](../my-react-app/README.md), [deploy](firebase.md))
 
 ## Architecture (high level)
 

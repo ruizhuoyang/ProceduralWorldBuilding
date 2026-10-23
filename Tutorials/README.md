@@ -23,16 +23,15 @@ Study notes for DESIGN 6197/4197 — work through classes in order.
 | **3D World → Terrain / Scatter / Splines / Particles** | 06 — A1–A3 ready |
 | **Voxel Terrain → Field** | 04 (density + rain / slope flow) |
 | **Voxel Terrain → Water Shaders** | 05 (GLSL on free-surface water) |
-| **Data Fossil** (final project) | 03 noise + 04 3D fBm + 05 height tint + 06 landforms / particles / orbits — [data-fossil/README.md](../data-fossil/README.md) |
 
-## Live sites
+## Live site
 
-- Course world: https://procedural-world-buildin-f602c.web.app
-- Data Fossil: https://pwb-data-fossil.web.app
+Course app: https://procedural-world-buildin-f602c.web.app
+
+The final project is a separate app: [Data Fossil](../data-fossil/README.md).
 
 ## Screenshots
 
-Shared course images: [`../Docs/assets/`](../Docs/assets/).  
-Final project shots: [`../data-fossil/docs/assets/`](../data-fossil/docs/assets/).
+Course images: [`../Docs/assets/`](../Docs/assets/).
 
 Back to [vault README](../README.md).
