@@ -56,6 +56,8 @@ type FossilCanvasProps = {
   orbitSystem: boolean
   /** View-mode camera inside the current stone */
   interiorView: boolean
+  /** View-mode camera standing on the stone surface */
+  surfaceView: boolean
   historyEntries: FossilHistoryEntry[]
   orbitSettings?: OrbitSystemSettings
   onSeedChange: (seed: number) => void
@@ -85,6 +87,8 @@ type SceneBag = {
   viewportMode: ViewportMode
   orbitSystem: boolean
   interiorView: boolean
+  surfaceView: boolean
+  surfaceFps: SurfaceFpsState | null
   solar: SolarSystem | null
   solarMeshKey: string
   atmosphere: AtmosphereSystem | null
@@ -92,6 +96,18 @@ type SceneBag = {
   atmospherePlaying: boolean
   seed: number
   clock: THREE.Clock
+}
+
+type SurfaceFpsState = {
+  yaw: number
+  pitch: number
+  keys: Set<string>
+  dragging: boolean
+  lastX: number
+  lastY: number
+  raycaster: THREE.Raycaster
+  up: THREE.Vector3
+  foot: THREE.Vector3
 }
 
 const HOME = {
@@ -104,8 +120,24 @@ const INTERIOR_HOME = {
   target: new THREE.Vector3(0, 0, 0),
 }
 
+/** Prefer a front foothold so the first look faces open space. */
+const SURFACE_SEEK = new THREE.Vector3(0.35, 0.28, 0.9).normalize()
+const _surfaceV = new THREE.Vector3()
+const _surfaceF = new THREE.Vector3()
+const _surfaceR = new THREE.Vector3()
+const _surfaceMove = new THREE.Vector3()
+const _surfaceFrom = new THREE.Vector3()
+const _surfaceDir = new THREE.Vector3()
+const _surfaceUp = new THREE.Vector3(0, 1, 0)
+
 const STUDIO_FOV = 40
 const INTERIOR_FOV = 80
+const SURFACE_FOV = 100
+const SURFACE_EYE_HEIGHT = 0.014
+const SURFACE_MOVE_SPEED = 0.7
+const SURFACE_LOOK_SENS = 0.0028
+const SURFACE_PITCH_MIN = -1.15
+const SURFACE_PITCH_MAX = 1.05
 const VIEW_SPIN_RAD_PER_SEC = 0.35
 
 function clearMapping(group: THREE.Group) {
@@ -229,8 +261,15 @@ function applyLighting(bag: SceneBag, lighting: LightingParams) {
 function syncAtmosphere(bag: SceneBag, wireframe: boolean) {
   if (bag.atmosphere) {
     bag.atmosphere.points.visible =
-      bag.atmosphereOn && !bag.orbitSystem && !bag.interiorView && !wireframe
+      bag.atmosphereOn &&
+      !bag.orbitSystem &&
+      !bag.interiorView &&
+      !wireframe
   }
+}
+
+function isLookAroundView(bag: SceneBag) {
+  return bag.interiorView || bag.surfaceView
 }
 
 function applyAtmosphereState(bag: SceneBag, params: AtmosphereParams, wireframe: boolean) {
@@ -264,7 +303,8 @@ function rebuildStudioAtmosphere(
 
 function applyViewportMode(bag: SceneBag, mode: ViewportMode) {
   bag.viewportMode = mode
-  bag.worldGroup.visible = mode === 'edit' && !bag.orbitSystem && !bag.interiorView
+  bag.worldGroup.visible =
+    mode === 'edit' && !bag.orbitSystem && !bag.interiorView && !bag.surfaceView
   syncAtmosphere(bag, bag.material.wireframe)
 }
 
@@ -311,9 +351,156 @@ function setInteriorCamera(bag: SceneBag) {
   bag.controls.update()
 }
 
+function pickSurfaceFoot(geometry: THREE.BufferGeometry, outFoot: THREE.Vector3, outNormal: THREE.Vector3) {
+  const pos = geometry.getAttribute('position')
+  let best = 0
+  let bestScore = -Infinity
+  for (let i = 0; i < pos.count; i++) {
+    _surfaceV.fromBufferAttribute(pos, i)
+    const score = _surfaceV.dot(SURFACE_SEEK)
+    if (score > bestScore) {
+      bestScore = score
+      best = i
+    }
+  }
+  outFoot.fromBufferAttribute(pos, best)
+  outNormal.copy(outFoot).normalize()
+}
+
+function raycastSurface(
+  bag: SceneBag,
+  direction: THREE.Vector3,
+  outFoot: THREE.Vector3,
+  outNormal: THREE.Vector3,
+): boolean {
+  const fps = bag.surfaceFps
+  if (!fps) return false
+  _surfaceDir.copy(direction).normalize()
+  if (_surfaceDir.lengthSq() < 1e-10) return false
+  _surfaceFrom.copy(_surfaceDir).multiplyScalar(6)
+  fps.raycaster.set(_surfaceFrom, _surfaceDir.negate())
+  const hits = fps.raycaster.intersectObject(bag.rock, false)
+  if (hits.length === 0) return false
+  const hit = hits[0]!
+  outFoot.copy(hit.point)
+  if (hit.normal) outNormal.copy(hit.normal).normalize()
+  else outNormal.copy(outFoot).normalize()
+  return true
+}
+
+function surfaceLookBasis(
+  up: THREE.Vector3,
+  yaw: number,
+  pitch: number,
+  outForward: THREE.Vector3,
+  outRight: THREE.Vector3,
+) {
+  outRight.crossVectors(_surfaceUp, up)
+  if (outRight.lengthSq() < 1e-8) outRight.set(1, 0, 0).cross(up)
+  outRight.normalize()
+  outForward.crossVectors(up, outRight).normalize()
+  outForward.applyAxisAngle(up, yaw)
+  outRight.crossVectors(outForward, up).normalize()
+  outForward.applyAxisAngle(outRight, pitch).normalize()
+  outRight.crossVectors(outForward, up).normalize()
+}
+
+function applySurfacePose(bag: SceneBag) {
+  const fps = bag.surfaceFps
+  if (!fps) return
+  surfaceLookBasis(fps.up, fps.yaw, fps.pitch, _surfaceF, _surfaceR)
+  bag.camera.position.copy(fps.foot).addScaledVector(fps.up, SURFACE_EYE_HEIGHT)
+  bag.camera.up.copy(fps.up)
+  bag.camera.lookAt(_surfaceV.copy(bag.camera.position).add(_surfaceF))
+  bag.camera.updateMatrixWorld()
+}
+
+function initSurfaceFps(bag: SceneBag) {
+  if (!bag.surfaceFps) {
+    bag.surfaceFps = {
+      yaw: 0,
+      pitch: -0.12,
+      keys: new Set(),
+      dragging: false,
+      lastX: 0,
+      lastY: 0,
+      raycaster: new THREE.Raycaster(),
+      up: new THREE.Vector3(0, 1, 0),
+      foot: new THREE.Vector3(),
+    }
+  }
+  const fps = bag.surfaceFps
+  fps.keys.clear()
+  fps.dragging = false
+  fps.pitch = -0.12
+  pickSurfaceFoot(bag.rock.geometry, fps.foot, fps.up)
+  if (!raycastSurface(bag, SURFACE_SEEK, fps.foot, fps.up)) {
+    pickSurfaceFoot(bag.rock.geometry, fps.foot, fps.up)
+  }
+  // Face roughly outward / horizon
+  surfaceLookBasis(fps.up, 0, 0, _surfaceF, _surfaceR)
+  const desired = _surfaceV.copy(_surfaceF)
+  desired.addScaledVector(fps.up, -desired.dot(fps.up))
+  if (desired.lengthSq() > 1e-8) {
+    const ref = _surfaceR.crossVectors(_surfaceUp, fps.up)
+    if (ref.lengthSq() < 1e-8) ref.set(1, 0, 0).cross(fps.up)
+    ref.normalize()
+    const north = _surfaceF.crossVectors(fps.up, ref).normalize()
+    fps.yaw = Math.atan2(desired.dot(ref), desired.dot(north))
+  } else {
+    fps.yaw = 0
+  }
+}
+
+function setSurfaceCamera(bag: SceneBag) {
+  bag.rock.rotation.set(0, 0, 0)
+  bag.controls.enabled = false
+  bag.camera.fov = SURFACE_FOV
+  bag.camera.near = 0.008
+  bag.camera.updateProjectionMatrix()
+  initSurfaceFps(bag)
+  applySurfacePose(bag)
+}
+
+function stepSurfaceFps(bag: SceneBag, dt: number) {
+  const fps = bag.surfaceFps
+  if (!fps || !bag.surfaceView) return
+
+  let forward = 0
+  let strafe = 0
+  if (fps.keys.has('KeyW') || fps.keys.has('KeyZ')) forward += 1
+  if (fps.keys.has('KeyS')) forward -= 1
+  if (fps.keys.has('KeyD')) strafe += 1
+  if (fps.keys.has('KeyA') || fps.keys.has('KeyQ')) strafe -= 1
+
+  if (forward !== 0 || strafe !== 0) {
+    surfaceLookBasis(fps.up, fps.yaw, fps.pitch, _surfaceF, _surfaceR)
+    _surfaceMove.copy(_surfaceF).addScaledVector(fps.up, -_surfaceF.dot(fps.up))
+    if (_surfaceMove.lengthSq() > 1e-8) _surfaceMove.normalize()
+    else _surfaceMove.set(0, 0, 0)
+    _surfaceMove.multiplyScalar(forward)
+    _surfaceMove.addScaledVector(_surfaceR, strafe)
+    if (_surfaceMove.lengthSq() > 1e-8) {
+      _surfaceMove.normalize().multiplyScalar(SURFACE_MOVE_SPEED * dt)
+      _surfaceV.copy(fps.foot).add(_surfaceMove)
+      if (raycastSurface(bag, _surfaceV, fps.foot, fps.up)) {
+        applySurfacePose(bag)
+      }
+    }
+  } else {
+    applySurfacePose(bag)
+  }
+}
+
+function leaveSurfaceCamera(bag: SceneBag) {
+  if (bag.surfaceFps) bag.surfaceFps.keys.clear()
+  bag.controls.enabled = true
+}
+
 function applyCameraRig(bag: SceneBag) {
   if (bag.orbitSystem) setOrbitCamera(bag, true)
   else if (bag.interiorView) setInteriorCamera(bag)
+  else if (bag.surfaceView) setSurfaceCamera(bag)
   else setOrbitCamera(bag, false)
 }
 
@@ -328,6 +515,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     viewportMode,
     orbitSystem,
     interiorView,
+    surfaceView,
     historyEntries,
     orbitSettings = DEFAULT_ORBIT_SYSTEM,
     onSeedChange,
@@ -343,6 +531,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
   const viewportModeRef = useRef(viewportMode)
   const orbitSystemRef = useRef(orbitSystem)
   const interiorViewRef = useRef(interiorView)
+  const surfaceViewRef = useRef(surfaceView)
   const historyRef = useRef(historyEntries)
   const orbitSettingsRef = useRef(orbitSettings)
   const wireframeRef = useRef(wireframe)
@@ -402,6 +591,8 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         setOrbitCamera(bag, true)
       } else if (bag.interiorView) {
         setInteriorCamera(bag)
+      } else if (bag.surfaceView) {
+        setSurfaceCamera(bag)
       } else {
         bag.camera.position.copy(HOME.position)
         bag.controls.target.copy(HOME.target)
@@ -544,6 +735,8 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       viewportMode: viewportModeRef.current,
       orbitSystem: false,
       interiorView: false,
+      surfaceView: false,
+      surfaceFps: null,
       solar: null,
       solarMeshKey: '',
       atmosphere: null,
@@ -587,13 +780,14 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       rebuildStudioAtmosphere(bag, seed, atmosphereRef.current, wireframeRef.current)
 
       clearMapping(bag.mappingGroup)
-      if (showMappingRef.current && !bag.orbitSystem && !bag.interiorView) {
+      if (showMappingRef.current && !bag.orbitSystem && !isLookAroundView(bag)) {
         const radiusHint = p.baseRadius + p.noiseStrength * 0.5 + p.digitStrength * 0.5
         buildMappingMarkers(regions, bag.mappingGroup, radiusHint)
         bag.mappingGroup.visible = true
       } else {
         bag.mappingGroup.visible = false
       }
+      if (bag.surfaceView) setSurfaceCamera(bag)
     }
 
     const rebuildSolar = () => {
@@ -613,6 +807,8 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       bag.orbitSystem = on
       if (on) {
         bag.interiorView = false
+        bag.surfaceView = false
+        leaveSurfaceCamera(bag)
         bag.material.side = THREE.FrontSide
         bag.material.needsUpdate = true
         bag.rock.visible = false
@@ -625,16 +821,21 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       } else {
         clearSolar(bag)
         bag.rock.visible = true
-        bag.worldGroup.visible = bag.viewportMode === 'edit' && !bag.interiorView
+        bag.worldGroup.visible =
+          bag.viewportMode === 'edit' && !bag.interiorView && !bag.surfaceView
         syncAtmosphere(bag, wireframeRef.current)
         applyLighting(bag, lightingRef.current)
         applyCameraRig(bag)
-        if (showMappingRef.current && !bag.interiorView) rebuild()
+        if (showMappingRef.current && !isLookAroundView(bag)) rebuild()
       }
     }
 
     const applyInteriorView = (on: boolean) => {
       bag.interiorView = on
+      if (on) {
+        bag.surfaceView = false
+        leaveSurfaceCamera(bag)
+      }
       bag.material.side = on ? THREE.BackSide : THREE.FrontSide
       bag.material.needsUpdate = true
       if (on) {
@@ -645,17 +846,42 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         applyLighting(bag, lightingRef.current)
         applyCameraRig(bag)
       } else {
-        bag.worldGroup.visible = bag.viewportMode === 'edit' && !bag.orbitSystem
+        bag.worldGroup.visible =
+          bag.viewportMode === 'edit' && !bag.orbitSystem && !bag.surfaceView
         syncAtmosphere(bag, wireframeRef.current)
         applyLighting(bag, lightingRef.current)
         if (!bag.orbitSystem) applyCameraRig(bag)
-        if (showMappingRef.current && !bag.orbitSystem) rebuild()
+        if (showMappingRef.current && !bag.orbitSystem && !bag.surfaceView) rebuild()
+      }
+    }
+
+    const applySurfaceView = (on: boolean) => {
+      bag.surfaceView = on
+      if (on) {
+        bag.interiorView = false
+        bag.material.side = THREE.FrontSide
+        bag.material.needsUpdate = true
+        bag.rock.visible = true
+        bag.mappingGroup.visible = false
+        bag.worldGroup.visible = false
+        syncAtmosphere(bag, wireframeRef.current)
+        applyLighting(bag, lightingRef.current)
+        applyCameraRig(bag)
+      } else {
+        leaveSurfaceCamera(bag)
+        bag.worldGroup.visible =
+          bag.viewportMode === 'edit' && !bag.orbitSystem && !bag.interiorView
+        syncAtmosphere(bag, wireframeRef.current)
+        applyLighting(bag, lightingRef.current)
+        if (!bag.orbitSystem) applyCameraRig(bag)
+        if (showMappingRef.current && !bag.orbitSystem && !bag.interiorView) rebuild()
       }
     }
 
     rebuild()
     if (orbitSystemRef.current) applyOrbitSystem(true)
     else if (interiorViewRef.current) applyInteriorView(true)
+    else if (surfaceViewRef.current) applySurfaceView(true)
 
     let frame = 0
     const animate = () => {
@@ -670,24 +896,27 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
           bag.atmospherePlaying,
         )
       } else {
-        if (bag.viewportMode === 'view' && !bag.interiorView) {
+        if (bag.viewportMode === 'view' && !isLookAroundView(bag)) {
           bag.rock.rotation.y += dt * VIEW_SPIN_RAD_PER_SEC
         }
         if (bag.interiorView) {
           bag.interiorLight.position.copy(bag.camera.position)
+        }
+        if (bag.surfaceView) {
+          stepSurfaceFps(bag, dt)
         }
         if (bag.atmosphere && bag.atmosphereOn && bag.atmospherePlaying) {
           stepAtmosphere(bag.atmosphere, dt, bag.rock.geometry)
         }
       }
 
-      bag.controls.update()
+      if (!bag.surfaceView) bag.controls.update()
 
       bag.renderer.clear()
       bag.renderer.render(bag.scene, bag.camera)
       bag.labelRenderer.render(bag.scene, bag.camera)
 
-      if (bag.viewportMode === 'edit' && !bag.orbitSystem && !bag.interiorView) {
+      if (bag.viewportMode === 'edit' && !bag.orbitSystem && !isLookAroundView(bag)) {
         const w = container.clientWidth
         const h = container.clientHeight
         const size = Math.min(88, Math.floor(Math.min(w, h) * 0.16))
@@ -728,15 +957,71 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       rebuildSolar: () => void
       applyOrbitSystem: (on: boolean) => void
       applyInteriorView: (on: boolean) => void
+      applySurfaceView: (on: boolean) => void
     }
     bagApi.rebuild = rebuild
     bagApi.rebuildSolar = rebuildSolar
     bagApi.applyOrbitSystem = applyOrbitSystem
     bagApi.applyInteriorView = applyInteriorView
+    bagApi.applySurfaceView = applySurfaceView
+
+    const canvasEl = bag.renderer.domElement
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!bag.surfaceView || !bag.surfaceFps) return
+      if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD' || e.code === 'KeyQ' || e.code === 'KeyZ') {
+        bag.surfaceFps.keys.add(e.code)
+        e.preventDefault()
+      }
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      bag.surfaceFps?.keys.delete(e.code)
+    }
+    const onPointerDown = (e: PointerEvent) => {
+      if (!bag.surfaceView || !bag.surfaceFps || e.button !== 0) return
+      bag.surfaceFps.dragging = true
+      bag.surfaceFps.lastX = e.clientX
+      bag.surfaceFps.lastY = e.clientY
+      canvasEl.setPointerCapture(e.pointerId)
+    }
+    const onPointerMove = (e: PointerEvent) => {
+      const fps = bag.surfaceFps
+      if (!bag.surfaceView || !fps?.dragging) return
+      const dx = e.clientX - fps.lastX
+      const dy = e.clientY - fps.lastY
+      fps.lastX = e.clientX
+      fps.lastY = e.clientY
+      fps.yaw -= dx * SURFACE_LOOK_SENS
+      fps.pitch = Math.min(
+        SURFACE_PITCH_MAX,
+        Math.max(SURFACE_PITCH_MIN, fps.pitch - dy * SURFACE_LOOK_SENS),
+      )
+      applySurfacePose(bag)
+    }
+    const onPointerUp = (e: PointerEvent) => {
+      if (!bag.surfaceFps) return
+      bag.surfaceFps.dragging = false
+      try {
+        canvasEl.releasePointerCapture(e.pointerId)
+      } catch {
+        /* already released */
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    canvasEl.addEventListener('pointerdown', onPointerDown)
+    canvasEl.addEventListener('pointermove', onPointerMove)
+    canvasEl.addEventListener('pointerup', onPointerUp)
+    canvasEl.addEventListener('pointercancel', onPointerUp)
 
     return () => {
       cancelAnimationFrame(frame)
       ro.disconnect()
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      canvasEl.removeEventListener('pointerdown', onPointerDown)
+      canvasEl.removeEventListener('pointermove', onPointerMove)
+      canvasEl.removeEventListener('pointerup', onPointerUp)
+      canvasEl.removeEventListener('pointercancel', onPointerUp)
       bag.controls.dispose()
       disposeMappingShared(bag.mappingGroup)
       clearMapping(bag.mappingGroup)
@@ -804,6 +1089,12 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     const bag = bagRef.current as (SceneBag & { applyInteriorView?: (on: boolean) => void }) | null
     bag?.applyInteriorView?.(interiorView)
   }, [interiorView])
+
+  useEffect(() => {
+    surfaceViewRef.current = surfaceView
+    const bag = bagRef.current as (SceneBag & { applySurfaceView?: (on: boolean) => void }) | null
+    bag?.applySurfaceView?.(surfaceView)
+  }, [surfaceView])
 
   useEffect(() => {
     const bag = bagRef.current as (SceneBag & { rebuildSolar?: () => void }) | null

@@ -14,7 +14,7 @@ Local tray Save still uses `localStorage`. **Cloud Save / Cloud Load** sync the 
 
 1. `cd data-fossil` then `npm install`.
 2. Copy `.env.example` → `.env.local` and fill `VITE_FIREBASE_*` (same values as `my-react-app/.env.local`).
-3. Authentication → Authorized domains: add `localhost`, `pwb-data-fossil.web.app`, and `pwb-data-fossil.firebaseapp.com` if missing.
+3. Authentication → Authorized domains must include `localhost`, `pwb-data-fossil.web.app`, and `pwb-data-fossil.firebaseapp.com` (already added for this project).
 4. Deploy:
 
 ```powershell

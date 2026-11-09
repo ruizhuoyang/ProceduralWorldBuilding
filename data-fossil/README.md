@@ -14,9 +14,10 @@ npm run dev
 
 | Mode | What it covers |
 |------|----------------|
-| **View** | Rock spins; no editor. Bottom-right: interior panorama, or stellar system (after Save) |
+| **View** | Rock spins; no editor. Bottom-right: interior, surface panorama, or stellar system (after Save) |
 | **Edit** | Right palette: digits, noise, landforms, stone colors, light, atmosphere |
 | **Interior** | Camera inside the mesh (`BackSide`); look around the stone cavity |
+| **Surface** | Low camera on the crust; WASD walk, drag to look (wide FOV) |
 | **Stellar system** | Saved fossils orbit a star; orbit palette on the right |
 
 Toolbar (top-right): wireframe, digit mapping overlay, particles on/off, play/pause, reset camera.

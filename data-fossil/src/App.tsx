@@ -69,6 +69,7 @@ export default function App() {
   const [viewportMode, setViewportMode] = useState<ViewportMode>('view')
   const [orbitSystem, setOrbitSystem] = useState(false)
   const [interiorView, setInteriorView] = useState(false)
+  const [surfaceView, setSurfaceView] = useState(false)
   const [orbitSettings, setOrbitSettings] = useState<OrbitSystemSettings>(DEFAULT_ORBIT_SYSTEM)
   const [seed, setSeed] = useState(0)
   const [revision, setRevision] = useState(0)
@@ -82,6 +83,7 @@ export default function App() {
     if (mode === 'edit') {
       setOrbitSystem(false)
       setInteriorView(false)
+      setSurfaceView(false)
     }
   }
 
@@ -274,15 +276,12 @@ export default function App() {
           </p>
         </header>
 
-        <div className="app__chrome-auth">
+        <div className="app__chrome-right">
           <FirebaseControls
             entries={history}
             orbit={orbitSettings}
             onLoadLibrary={handleLoadCloudLibrary}
           />
-        </div>
-
-        <div className="app__chrome-right">
           <ViewportToolbar
             wireframe={wireframe}
             onWireframeChange={setWireframe}
@@ -325,6 +324,7 @@ export default function App() {
           viewportMode={viewportMode}
           orbitSystem={orbitSystem && isView}
           interiorView={interiorView && isView}
+          surfaceView={surfaceView && isView}
           historyEntries={history}
           orbitSettings={orbitSettings}
           onSeedChange={setSeed}
@@ -343,6 +343,7 @@ export default function App() {
                   return
                 }
                 setOrbitSystem(false)
+                setSurfaceView(false)
                 setInteriorView(true)
               }}
             >
@@ -368,6 +369,44 @@ export default function App() {
             </button>
             <button
               type="button"
+              className={`app__orbit-btn ${surfaceView ? 'app__orbit-btn--on' : ''}`}
+              aria-pressed={surfaceView}
+              title={
+                surfaceView
+                  ? 'Exit surface panorama'
+                  : 'Surface panorama — WASD move, drag to look'
+              }
+              onClick={() => {
+                if (surfaceView) {
+                  setSurfaceView(false)
+                  return
+                }
+                setOrbitSystem(false)
+                setInteriorView(false)
+                setSurfaceView(true)
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden>
+                <path
+                  d="M3.5 16.5c2.2-1.4 4.6-2.1 8.5-2.1s6.3.7 8.5 2.1"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M4.2 13.2c2.1-2.6 4.7-4 7.8-4s5.7 1.4 7.8 4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+                <circle cx="12" cy="7.2" r="2.1" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                <circle cx="12" cy="7.2" r="0.7" fill="currentColor" />
+              </svg>
+            </button>
+            <button
+              type="button"
               className={`app__orbit-btn ${orbitSystem ? 'app__orbit-btn--on' : ''}`}
               aria-pressed={orbitSystem}
               title={
@@ -384,6 +423,7 @@ export default function App() {
                   return
                 }
                 setInteriorView(false)
+                setSurfaceView(false)
                 setOrbitSystem(true)
               }}
             >
