@@ -108,15 +108,19 @@ function normalizeEntry(raw: Record<string, unknown>): FossilHistoryEntry | null
   }
 }
 
+export function loadHistoryFromRaw(raw: unknown): FossilHistoryEntry[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((item) => normalizeEntry(item as Record<string, unknown>))
+    .filter((e): e is FossilHistoryEntry => e !== null)
+    .slice(-HISTORY_MAX)
+}
+
 export function loadHistory(): FossilHistoryEntry[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown[]
-    if (!Array.isArray(parsed)) return []
-    return parsed
-      .map((item) => normalizeEntry(item as Record<string, unknown>))
-      .filter((e): e is FossilHistoryEntry => e !== null)
+    return loadHistoryFromRaw(JSON.parse(raw) as unknown)
   } catch {
     return []
   }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Controls from './components/Controls'
+import FirebaseControls from './components/FirebaseControls'
 import FossilCanvas, { type FossilCanvasHandle } from './components/FossilCanvas'
 import HistoryTray from './components/HistoryTray'
 import OrbitPalette from './components/OrbitPalette'
@@ -248,6 +249,19 @@ export default function App() {
     })
   }
 
+  const handleLoadCloudLibrary = (payload: {
+    entries: FossilHistoryEntry[]
+    orbit: OrbitSystemSettings
+  }) => {
+    setHistory(payload.entries)
+    saveHistory(payload.entries)
+    setOrbitSettings(payload.orbit)
+    saveOrbitSystem(payload.orbit)
+    if (payload.entries.length > 0) {
+      handleSelectHistory(payload.entries[payload.entries.length - 1])
+    }
+  }
+
   const showOrbitPalette = isView && orbitSystem && history.length > 0
 
   return (
@@ -259,6 +273,14 @@ export default function App() {
             Personal numbers become a unique rock — digits shape bumps, noise gives the stone its skin.
           </p>
         </header>
+
+        <div className="app__chrome-auth">
+          <FirebaseControls
+            entries={history}
+            orbit={orbitSettings}
+            onLoadLibrary={handleLoadCloudLibrary}
+          />
+        </div>
 
         <div className="app__chrome-right">
           <ViewportToolbar

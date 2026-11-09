@@ -21,6 +21,8 @@ npm run dev
 
 Toolbar (top-right): wireframe, digit mapping overlay, particles on/off, play/pause, reset camera.
 
+**Cloud library** (under the title): Google sign-in, then **Cloud Save** / **Cloud Load** for the tray + orbit settings (Firestore). Local **Save** still writes to this browser only. See [FIREBASE.md](FIREBASE.md).
+
 ## Architecture
 
 ```mermaid
@@ -62,12 +64,13 @@ By bringing geological time into a digital medium, Data Fossil questions the pro
 
 ## Deploy
 
-Firebase Hosting site `pwb-data-fossil` (this folder: `firebase.json`, `.firebaserc`). No Auth or Firestore.
+Firebase project `procedural-world-buildin-f602c`. Hosting site `pwb-data-fossil`. Auth + Firestore share the course project (see [FIREBASE.md](FIREBASE.md)).
 
 ```powershell
 cd data-fossil
+# Copy .env.example → .env.local and fill VITE_FIREBASE_* first
 npm run build
-firebase deploy --only hosting
+firebase deploy --only hosting,firestore:rules
 ```
 
 Live URL stays **https://pwb-data-fossil.web.app**.
@@ -94,6 +97,8 @@ src/
     solarSystem.ts      Stellar view
     orbit.ts            Planet orbits
     history.ts          Local save tray
+    cloudLibrary.ts     Firestore tray sync
+  firebase.ts           Auth + Firestore client
 ```
 
 ## Gallery

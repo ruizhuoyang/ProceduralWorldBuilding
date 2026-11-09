@@ -53,6 +53,14 @@
   pointer-events: none;
 }
 
+.app__chrome-auth {
+  position: absolute;
+  top: 5.1rem;
+  left: 1.5rem;
+  z-index: 3;
+  pointer-events: auto;
+}
+
 .app__chrome-right {
   position: absolute;
   top: 1.35rem;

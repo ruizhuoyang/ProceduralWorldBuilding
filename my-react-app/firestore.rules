@@ -1,6 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Procedural World — terrain scene (course app)
     match /users/{userId}/configs/main {
       allow get: if request.auth != null && request.auth.uid == userId;
       allow create, update: if request.auth != null
@@ -21,5 +22,55 @@ service cloud.firestore {
         && request.resource.data.scene.displacementScale <= 6
         && request.resource.data.scene.fog is bool;
     }
+
+    // Data Fossil — saved tray + orbit settings
+    match /users/{userId}/configs/fossil {
+      allow get: if request.auth != null && request.auth.uid == userId;
+      allow create, update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['entries', 'orbit', 'updatedAt'])
+        && request.resource.data.keys().hasAll(['entries', 'orbit', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.entries is list
+        && request.resource.data.entries.size() <= 12
+        && request.resource.data.orbit.keys().hasOnly(['shape', 'spread', 'playing'])
+        && request.resource.data.orbit.keys().hasAll(['shape', 'spread', 'playing'])
+        && request.resource.data.orbit.shape in ['circle', 'ellipse']
+        && request.resource.data.orbit.spread is number
+        && request.resource.data.orbit.spread >= 0
+        && request.resource.data.orbit.spread <= 1
+        && request.resource.data.orbit.playing is bool
+        && fossilEntriesOk(request.resource.data.entries);
+    }
+  }
+
+  function fossilEntriesOk(entries) {
+    return entries.size() == 0
+      || (entries.size() >= 1 && fossilEntryOk(entries[0])
+        && (entries.size() < 2 || fossilEntryOk(entries[1]))
+        && (entries.size() < 3 || fossilEntryOk(entries[2]))
+        && (entries.size() < 4 || fossilEntryOk(entries[3]))
+        && (entries.size() < 5 || fossilEntryOk(entries[4]))
+        && (entries.size() < 6 || fossilEntryOk(entries[5]))
+        && (entries.size() < 7 || fossilEntryOk(entries[6]))
+        && (entries.size() < 8 || fossilEntryOk(entries[7]))
+        && (entries.size() < 9 || fossilEntryOk(entries[8]))
+        && (entries.size() < 10 || fossilEntryOk(entries[9]))
+        && (entries.size() < 11 || fossilEntryOk(entries[10]))
+        && (entries.size() < 12 || fossilEntryOk(entries[11])));
+  }
+
+  function fossilEntryOk(entry) {
+    return entry.keys().hasAll(['id', 'digits', 'thumb', 'createdAt', 'params', 'lighting', 'atmosphere', 'orbit'])
+      && entry.id is string
+      && entry.id.size() > 0
+      && entry.id.size() <= 64
+      && entry.digits is string
+      && entry.digits.size() > 0
+      && entry.digits.size() <= 16
+      && entry.thumb is string
+      && entry.thumb.size() > 0
+      && entry.thumb.size() <= 120000
+      && entry.createdAt is number;
   }
 }

@@ -1,0 +1,47 @@
+.firebase-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  max-width: min(22rem, 48vw);
+}
+
+.firebase-controls button {
+  height: 1.85rem;
+  padding: 0 0.55rem;
+  font: inherit;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  background: rgba(236, 235, 232, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+
+.firebase-controls button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.firebase-controls button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.firebase-controls__user {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  max-width: 6.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.firebase-controls__message {
+  color: var(--accent);
+  font-size: 0.65rem;
+  max-width: 11rem;
+}
