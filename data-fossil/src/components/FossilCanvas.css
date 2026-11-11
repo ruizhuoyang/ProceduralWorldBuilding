@@ -88,6 +88,29 @@
   cursor: pointer;
 }
 
+.fossil-surface-guide {
+  position: absolute;
+  z-index: 6;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.fossil-surface-guide__arrow {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 12px solid #c49a5a;
+  filter: drop-shadow(0 1px 1px rgba(42, 36, 24, 0.35));
+}
+
+.fossil-surface-guide[data-mode='edge'] .fossil-surface-guide__arrow {
+  border-bottom-color: #b8894a;
+}
+
 .fossil-planet-label--chase-mover {
   border-color: #c49a5a;
   background: rgba(196, 154, 90, 0.92);

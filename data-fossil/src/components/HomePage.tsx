@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuth } from '../hooks/useAuth'
 import HomeHeroCanvas from './HomeHeroCanvas'
 import './HomePage.css'
@@ -17,8 +17,17 @@ export default function HomePage({ onEnter }: Props) {
   const { ready, user, busy, error, signInWithGoogle, signOutUser } = useAuth()
   const [aboutOpen, setAboutOpen] = useState(false)
 
+  useEffect(() => {
+    if (!aboutOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAboutOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [aboutOpen])
+
   return (
-    <div className={`home${aboutOpen ? ' home--about' : ''}`}>
+    <div className="home">
       <aside className="home__copy" aria-label="Data Fossil introduction">
         <h1 className="home__title">Data Fossil</h1>
         <p className="home__lede">
@@ -59,9 +68,10 @@ export default function HomePage({ onEnter }: Props) {
 
           <button
             type="button"
-            className={`home__quiet home__about-toggle${aboutOpen ? ' is-open' : ''}`}
+            className="home__quiet"
+            aria-haspopup="dialog"
             aria-expanded={aboutOpen}
-            onClick={() => setAboutOpen((v) => !v)}
+            onClick={() => setAboutOpen(true)}
           >
             About Data Fossil
           </button>
@@ -72,19 +82,39 @@ export default function HomePage({ onEnter }: Props) {
             {error}
           </p>
         ) : null}
-
-        {aboutOpen ? (
-          <div className="home__about" role="region" aria-label="About Data Fossil">
-            {ABOUT.map((para) => (
-              <p key={para.slice(0, 24)}>{para}</p>
-            ))}
-          </div>
-        ) : null}
       </aside>
 
       <div className="home__stage">
         <HomeHeroCanvas />
       </div>
+
+      {aboutOpen ? (
+        <div
+          className="home__about-page"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="about-heading"
+        >
+          <button
+            type="button"
+            className="home__about-close"
+            aria-label="Close"
+            onClick={() => setAboutOpen(false)}
+          >
+            ×
+          </button>
+          <div className="home__about-panel">
+            <h2 id="about-heading" className="home__about-heading">
+              About Data Fossil
+            </h2>
+            <div className="home__about-body">
+              {ABOUT.map((para) => (
+                <p key={para.slice(0, 24)}>{para}</p>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

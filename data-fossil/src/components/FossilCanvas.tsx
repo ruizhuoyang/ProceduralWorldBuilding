@@ -8,7 +8,9 @@ import type { FossilHistoryEntry } from '../lib/history'
 import { DEFAULT_ORBIT_SYSTEM, type OrbitSystemSettings } from '../lib/orbit'
 import {
   buildFormedPlanetGeometry,
+  isImpactScar,
   pickScarMemoryAt,
+  type PlanetScar,
   type SurfaceMemoryInfo,
 } from '../lib/planetFormation'
 import {
@@ -38,6 +40,16 @@ import {
   tickAccretionAnim,
   type AccretionAnim,
 } from '../lib/accretionAnim'
+import {
+  clearFxParticles,
+  createFxParticleSystem,
+  disposeFxParticleSystem,
+  FX_KIND,
+  spawnImprintCascade,
+  stepFxParticles,
+  syncSurfaceDust,
+  type FxParticleSystem,
+} from '../lib/fxParticles'
 import { systemMeshKey, type BodyCollision, type SystemBody } from '../lib/systemBodies'
 import type {
   AtmosphereParams,
@@ -56,6 +68,8 @@ export type FossilCanvasHandle = {
   getSolarPhases: () => Record<string, number>
   /** Drop an in-flight accretion so a removed body cannot reappear on finish. */
   cancelAccretion: () => void
+  /** After the surface memory card closes — advance the imprint guide arrow. */
+  notifySurfaceMemoryClosed: () => void
 }
 
 type FossilCanvasProps = {
@@ -125,6 +139,10 @@ type SceneBag = {
   collisionLockUntil: number
   surfaceBodyId: string | null
   accretion: AccretionAnim | null
+  surfaceGuide: SurfaceGuideState | null
+  fx: FxParticleSystem | null
+  _fxFoot: THREE.Vector3
+  _fxClick: THREE.Vector3
 }
 
 type SurfaceFpsState = {
@@ -142,6 +160,17 @@ type SurfaceFpsState = {
   raycaster: THREE.Raycaster
   up: THREE.Vector3
   foot: THREE.Vector3
+}
+
+type SurfaceGuideState = {
+  el: HTMLDivElement
+  arrow: HTMLDivElement
+  viewed: Set<string>
+  /** Scar opened in the memory card, waiting for close. */
+  pendingKey: string | null
+  _proj: THREE.Vector3
+  _world: THREE.Vector3
+  _camFwd: THREE.Vector3
 }
 
 const SURFACE_CLICK_SLOP = 6
@@ -173,11 +202,14 @@ const SURFACE_FOV = 100
 const SURFACE_EYE_HEIGHT = 0.036
 /** Near must stay well below eye height so looking down does not slice the mesh. */
 const SURFACE_NEAR = 0.0012
-const SURFACE_MOVE_SPEED = 0.7
+/** ~50% of the previous 0.7 pace — slow approach to imprints; still dt-scaled. */
+const SURFACE_MOVE_SPEED = 0.34
 const SURFACE_LOOK_SENS = 0.0028
 const SURFACE_PITCH_MIN = -0.98
 const SURFACE_PITCH_MAX = 1.05
 const VIEW_SPIN_RAD_PER_SEC = 0.35
+const SURFACE_GUIDE_MARGIN = 28
+const SURFACE_GUIDE_ABOVE = 42
 
 function clearMapping(group: THREE.Group) {
   while (group.children.length > 0) {
@@ -540,6 +572,8 @@ function setSurfaceCamera(bag: SceneBag, seekDir?: THREE.Vector3 | null) {
 function stepSurfaceFps(bag: SceneBag, dt: number) {
   const fps = bag.surfaceFps
   if (!fps || !bag.surfaceView) return
+  // Cap hitch spikes so a long pause does not teleport across the crust.
+  const stepDt = Math.min(Math.max(dt, 0), 0.05)
 
   let forward = 0
   let strafe = 0
@@ -556,7 +590,7 @@ function stepSurfaceFps(bag: SceneBag, dt: number) {
     _surfaceMove.multiplyScalar(forward)
     _surfaceMove.addScaledVector(_surfaceR, strafe)
     if (_surfaceMove.lengthSq() > 1e-8) {
-      _surfaceMove.normalize().multiplyScalar(SURFACE_MOVE_SPEED * dt)
+      _surfaceMove.normalize().multiplyScalar(SURFACE_MOVE_SPEED * stepDt)
       _surfaceV.copy(fps.foot).add(_surfaceMove)
       if (raycastSurface(bag, _surfaceV, fps.foot, fps.up)) {
         applySurfacePose(bag)
@@ -572,8 +606,251 @@ function leaveSurfaceCamera(bag: SceneBag) {
     bag.surfaceFps.keys.clear()
     bag.surfaceFps.hoverMemory = false
   }
+  hideSurfaceGuide(bag)
+  if (bag.fx) {
+    clearFxParticles(
+      bag.fx,
+      (i) => bag.fx!.kind[i] === FX_KIND.DUST || bag.fx!.kind[i] === FX_KIND.IMPRINT,
+    )
+    bag.fx.dustScarKey = null
+    bag.fx.dustFade = 0
+    bag.fx.imprintPlaying = false
+  }
   bag.controls.enabled = true
   bag.renderer.domElement.style.cursor = ''
+}
+
+function scarGuideKey(scar: Pick<PlanetScar, 'fossilId' | 'localPoint'> | SurfaceMemoryInfo) {
+  const [x, y, z] = scar.localPoint
+  return `${scar.fossilId}|${x.toFixed(3)}|${y.toFixed(3)}|${z.toFixed(3)}`
+}
+
+/** Latest impact first, then older impacts, then native landmarks. */
+function surfaceGuideOrder(scars: PlanetScar[]): PlanetScar[] {
+  const impacts: PlanetScar[] = []
+  const natives: PlanetScar[] = []
+  for (const scar of scars) {
+    if (isImpactScar(scar)) impacts.push(scar)
+    else natives.push(scar)
+  }
+  return [...impacts].reverse().concat([...natives].reverse())
+}
+
+function currentGuideScar(bag: SceneBag, body: SystemBody | null): PlanetScar | null {
+  const guide = bag.surfaceGuide
+  if (!guide || !body) return null
+  for (const scar of surfaceGuideOrder(body.planet.scars)) {
+    if (!guide.viewed.has(scarGuideKey(scar))) return scar
+  }
+  return null
+}
+
+function ensureSurfaceGuide(bag: SceneBag, host: HTMLElement) {
+  if (bag.surfaceGuide) return bag.surfaceGuide
+  const el = document.createElement('div')
+  el.className = 'fossil-surface-guide'
+  el.hidden = true
+  el.setAttribute('aria-hidden', 'true')
+  const arrow = document.createElement('div')
+  arrow.className = 'fossil-surface-guide__arrow'
+  el.appendChild(arrow)
+  host.appendChild(el)
+  bag.surfaceGuide = {
+    el,
+    arrow,
+    viewed: new Set(),
+    pendingKey: null,
+    _proj: new THREE.Vector3(),
+    _world: new THREE.Vector3(),
+    _camFwd: new THREE.Vector3(),
+  }
+  return bag.surfaceGuide
+}
+
+function resetSurfaceGuide(bag: SceneBag) {
+  if (!bag.surfaceGuide) return
+  bag.surfaceGuide.viewed.clear()
+  bag.surfaceGuide.pendingKey = null
+  hideSurfaceGuide(bag)
+}
+
+function hideSurfaceGuide(bag: SceneBag) {
+  const guide = bag.surfaceGuide
+  if (!guide) return
+  guide.el.hidden = true
+}
+
+function clampGuideToEdge(
+  sx: number,
+  sy: number,
+  width: number,
+  height: number,
+  margin: number,
+): { x: number; y: number; angle: number } {
+  const cx = width * 0.5
+  const cy = height * 0.5
+  let dx = sx - cx
+  let dy = sy - cy
+  if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) dy = -1
+  const len = Math.hypot(dx, dy) || 1
+  dx /= len
+  dy /= len
+
+  const left = margin
+  const right = width - margin
+  const top = margin
+  const bottom = height - margin
+  const tx = dx > 0 ? (right - cx) / dx : dx < 0 ? (left - cx) / dx : Number.POSITIVE_INFINITY
+  const ty = dy > 0 ? (bottom - cy) / dy : dy < 0 ? (top - cy) / dy : Number.POSITIVE_INFINITY
+  const t = Math.min(Math.abs(tx), Math.abs(ty))
+  return {
+    x: cx + dx * t,
+    y: cy + dy * t,
+    angle: (Math.atan2(dy, dx) * 180) / Math.PI + 90,
+  }
+}
+
+function updateSurfaceGuideArrow(bag: SceneBag, body: SystemBody | null) {
+  const guide = bag.surfaceGuide
+  const fps = bag.surfaceFps
+  if (!guide || !fps || !bag.surfaceView || !body) {
+    hideSurfaceGuide(bag)
+    return
+  }
+  const scar = currentGuideScar(bag, body)
+  if (!scar) {
+    hideSurfaceGuide(bag)
+    return
+  }
+
+  const canvas = bag.renderer.domElement
+  const width = canvas.clientWidth
+  const height = canvas.clientHeight
+  if (width <= 0 || height <= 0) {
+    hideSurfaceGuide(bag)
+    return
+  }
+
+  guide._world.set(...scar.localPoint)
+  if (guide._world.lengthSq() < 1e-10) {
+    guide._world.set(...scar.direction).negate()
+  }
+  if (guide._world.lengthSq() < 1e-10) {
+    hideSurfaceGuide(bag)
+    return
+  }
+  guide._world.normalize()
+  const lift = 0.045
+  guide._world.multiplyScalar(1 + lift)
+  bag.rock.localToWorld(guide._world)
+
+  bag.camera.getWorldDirection(guide._camFwd)
+  const toTarget = guide._proj.copy(guide._world).sub(bag.camera.position)
+  const inFront = toTarget.dot(guide._camFwd) > 0.02
+
+  guide._proj.copy(guide._world).project(bag.camera)
+  let sx = (guide._proj.x * 0.5 + 0.5) * width
+  let sy = (-guide._proj.y * 0.5 + 0.5) * height
+  if (!inFront) {
+    // Project behind the camera → push toward the opposite screen edge.
+    sx = width * 0.5 - guide._proj.x * width
+    sy = height * 0.5 + guide._proj.y * height
+  }
+
+  const onScreen =
+    inFront &&
+    sx >= SURFACE_GUIDE_MARGIN &&
+    sx <= width - SURFACE_GUIDE_MARGIN &&
+    sy >= SURFACE_GUIDE_MARGIN &&
+    sy <= height - SURFACE_GUIDE_MARGIN
+
+  guide.el.hidden = false
+  if (onScreen) {
+    guide.el.style.left = `${sx}px`
+    guide.el.style.top = `${sy - SURFACE_GUIDE_ABOVE}px`
+    guide.el.style.transform = 'translate(-50%, -50%) rotate(180deg)'
+    guide.el.dataset.mode = 'over'
+  } else {
+    const edge = clampGuideToEdge(sx, sy, width, height, SURFACE_GUIDE_MARGIN)
+    guide.el.style.left = `${edge.x}px`
+    guide.el.style.top = `${edge.y}px`
+    guide.el.style.transform = `translate(-50%, -50%) rotate(${edge.angle}deg)`
+    guide.el.dataset.mode = 'edge'
+  }
+}
+
+function noteSurfaceMemoryOpened(bag: SceneBag, memory: SurfaceMemoryInfo | null) {
+  if (!bag.surfaceGuide || !memory) return
+  bag.surfaceGuide.pendingKey = scarGuideKey(memory)
+}
+
+function updateSurfaceDustFx(bag: SceneBag, body: SystemBody | null) {
+  const fx = bag.fx
+  const fps = bag.surfaceFps
+  if (!fx || !fps || !bag.surfaceView) return
+  const scar = currentGuideScar(bag, body)
+  bag.rock.localToWorld(bag._fxFoot.copy(fps.foot))
+  syncSurfaceDust(fx, {
+    rock: bag.rock,
+    scar,
+    footWorld: bag._fxFoot,
+    camera: bag.camera,
+    forceHide: !scar,
+  })
+}
+
+function resolveScarFromMemory(body: SystemBody | null, memory: SurfaceMemoryInfo): PlanetScar | null {
+  if (!body) return null
+  const key = scarGuideKey(memory)
+  return body.planet.scars.find((s) => scarGuideKey(s) === key) ?? null
+}
+
+function triggerImprintCascadeFx(
+  bag: SceneBag,
+  body: SystemBody | null,
+  memory: SurfaceMemoryInfo,
+  clientX: number,
+  clientY: number,
+) {
+  const fx = bag.fx
+  if (!fx) return
+  const scar = resolveScarFromMemory(body, memory)
+  if (!scar) return
+
+  const canvas = bag.renderer.domElement
+  const rect = canvas.getBoundingClientRect()
+  const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1
+  const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1
+  const fps = bag.surfaceFps
+  let clickWorld = bag._fxClick
+  if (fps) {
+    fps.pickRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), bag.camera)
+    const hits = fps.pickRaycaster.intersectObject(bag.rock, false)
+    if (hits[0]) clickWorld.copy(hits[0].point)
+    else bag.rock.localToWorld(clickWorld.copy(fps.foot))
+  } else {
+    bag.rock.localToWorld(clickWorld.set(...scar.localPoint).normalize().multiplyScalar(1.03))
+  }
+
+  spawnImprintCascade(fx, {
+    rock: bag.rock,
+    scar,
+    clickWorld,
+  })
+}
+
+function advanceSurfaceGuideAfterClose(bag: SceneBag, body: SystemBody | null) {
+  const guide = bag.surfaceGuide
+  if (!guide) return
+  if (guide.pendingKey) {
+    guide.viewed.add(guide.pendingKey)
+    guide.pendingKey = null
+  }
+  // Seat the player near the next unviewed mark so WASD can finish the approach.
+  const next = currentGuideScar(bag, body)
+  if (next && bag.surfaceView) {
+    setSurfaceCamera(bag, new THREE.Vector3(...next.localPoint))
+  }
 }
 
 function pickSurfaceMemoryFromClient(
@@ -803,6 +1080,12 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       bag.accretion = null
       bag.collisionLockUntil = performance.now() + 400
     },
+    notifySurfaceMemoryClosed: () => {
+      const bag = bagRef.current
+      if (!bag) return
+      advanceSurfaceGuideAfterClose(bag, surfaceBodyRef.current)
+      updateSurfaceGuideArrow(bag, surfaceBodyRef.current)
+    },
   }))
 
   useEffect(() => {
@@ -906,8 +1189,14 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       clock: new THREE.Clock(),
       collisionLockUntil: 0,
       surfaceBodyId: null,
+      surfaceGuide: null,
       accretion: null,
+      fx: null,
+      _fxFoot: new THREE.Vector3(),
+      _fxClick: new THREE.Vector3(),
     }
+    bag.fx = createFxParticleSystem()
+    bag.scene.add(bag.fx.root)
     bagRef.current = bag
     applyLighting(bag, lightingRef.current)
     applyAtmosphereState(bag, atmosphereRef.current, wireframeRef.current)
@@ -1029,6 +1318,15 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
           disposeAccretionAnim(bag.accretion)
           bag.accretion = null
         }
+        if (bag.fx) {
+          clearFxParticles(
+            bag.fx,
+            (i) =>
+              bag.fx!.kind[i] === FX_KIND.RETURN ||
+              bag.fx!.kind[i] === FX_KIND.SCATTER ||
+              bag.fx!.kind[i] === FX_KIND.TRAIL,
+          )
+        }
         clearSolar(bag)
         bag.rock.visible = true
         bag.worldGroup.visible =
@@ -1076,10 +1374,13 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         bag.rock.visible = true
         bag.mappingGroup.visible = false
         bag.worldGroup.visible = false
+        ensureSurfaceGuide(bag, container)
+        resetSurfaceGuide(bag)
         rebuild()
         syncAtmosphere(bag, wireframeRef.current)
         applyLighting(bag, lightingRef.current)
         applyCameraRig(bag)
+        updateSurfaceGuideArrow(bag, surfaceBodyRef.current)
       } else {
         leaveSurfaceCamera(bag)
         bag.worldGroup.visible =
@@ -1109,6 +1410,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
             bag.solar,
             dt,
             orbitSettingsRef.current.playing,
+            bag.fx,
           )
           if (done) {
             const collision = bag.accretion.collision
@@ -1145,6 +1447,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
                 collision,
                 survivorBody,
                 absorbedBody,
+                bag.fx,
               )
             }
           }
@@ -1158,10 +1461,17 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         }
         if (bag.surfaceView) {
           stepSurfaceFps(bag, dt)
+          updateSurfaceGuideArrow(bag, surfaceBodyRef.current)
+          updateSurfaceDustFx(bag, surfaceBodyRef.current)
         }
         if (bag.atmosphere && bag.atmosphereOn && bag.atmospherePlaying) {
           stepAtmosphere(bag.atmosphere, dt, bag.rock.geometry)
         }
+      }
+
+      if (bag.fx) {
+        if (bag.surfaceView) bag.rock.getWorldPosition(bag.fx.anchor)
+        stepFxParticles(bag.fx, dt)
       }
 
       if (!bag.surfaceView) bag.controls.update()
@@ -1268,6 +1578,10 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     }
     const finishSurfaceClick = (clientX: number, clientY: number) => {
       const memory = pickSurfaceMemoryFromClient(bag, surfaceBodyRef.current, clientX, clientY)
+      noteSurfaceMemoryOpened(bag, memory)
+      if (memory && bag.fx && bag.surfaceView) {
+        triggerImprintCascadeFx(bag, surfaceBodyRef.current, memory, clientX, clientY)
+      }
       onSurfaceMemoryPickRef.current?.(memory)
     }
     const onPointerUp = (e: PointerEvent) => {
@@ -1313,6 +1627,8 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         disposeAccretionAnim(bag.accretion)
         bag.accretion = null
       }
+      disposeFxParticleSystem(bag.fx)
+      bag.fx = null
       clearSolar(bag)
       disposeStudioAtmosphere(bag)
       while (bag.worldGroup.children.length > 0) {
@@ -1334,6 +1650,10 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       else axesMat.dispose()
       bag.rock.geometry.dispose()
       bag.material.dispose()
+      if (bag.surfaceGuide?.el.parentNode) {
+        bag.surfaceGuide.el.parentNode.removeChild(bag.surfaceGuide.el)
+      }
+      bag.surfaceGuide = null
       bag.renderer.dispose()
       if (bag.renderer.domElement.parentNode) {
         bag.renderer.domElement.parentNode.removeChild(bag.renderer.domElement)
@@ -1468,7 +1788,11 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
   useEffect(() => {
     const bag = bagRef.current as (SceneBag & { rebuild?: () => void }) | null
     if (!bag || bag.orbitSystem) return
-    if (bag.surfaceView || bag.interiorView) bag.rebuild?.()
+    if (bag.surfaceView || bag.interiorView) {
+      if (bag.surfaceView) resetSurfaceGuide(bag)
+      bag.rebuild?.()
+      if (bag.surfaceView) updateSurfaceGuideArrow(bag, surfaceBody)
+    }
   }, [surfaceBody, surfaceView, interiorView])
 
   return <div className="fossil-canvas" ref={containerRef} aria-label="Data Fossil viewport" />

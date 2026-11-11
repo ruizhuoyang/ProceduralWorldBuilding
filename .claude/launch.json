@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "data-fossil", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "data-fossil", "run", "dev"], "port": 5173 }
+  ]
+}

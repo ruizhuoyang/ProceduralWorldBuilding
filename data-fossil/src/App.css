@@ -49,34 +49,21 @@
   top: 1.35rem;
   left: 1.5rem;
   z-index: 2;
-  max-width: min(22rem, 48%);
+  max-width: min(28rem, calc(100% - 16rem));
   pointer-events: none;
 }
 
-.app__brand .app__home-link {
+.app__brand .app__title-home {
   pointer-events: auto;
 }
 
-.app__home-link {
-  display: inline-block;
-  margin-top: 0.45rem;
-  padding: 0;
-  font: inherit;
+.app__brand-note {
+  margin: 0.45rem 0 0;
   font-size: 0.72rem;
   font-weight: 500;
   letter-spacing: 0.04em;
+  line-height: 1.4;
   color: var(--text-muted);
-  background: none;
-  border: none;
-  cursor: pointer;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  text-underline-offset: 0.16em;
-}
-
-.app__home-link:hover {
-  color: var(--text);
-  text-decoration-color: var(--border);
 }
 
 .app__chrome-right {
@@ -229,6 +216,36 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--text);
+  white-space: nowrap;
+}
+
+.app__title-home {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.12s ease;
+}
+
+.app__title-home:hover,
+.app__title-home:focus-visible {
+  color: var(--accent-ink);
+}
+
+.app__title-home:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
 }
 
 @media (max-width: 800px) {
@@ -251,7 +268,17 @@
   .app__brand {
     top: 1rem;
     left: 1rem;
-    max-width: min(14rem, 42%);
+    max-width: min(16rem, calc(100% - 11.5rem));
+  }
+
+  .app__title {
+    font-size: clamp(0.95rem, 3.6vw, 1.25rem);
+    letter-spacing: 0.1em;
+  }
+
+  .app__brand-note {
+    font-size: 0.65rem;
+    letter-spacing: 0.02em;
   }
 
   .controls {

@@ -8,14 +8,19 @@ import { applyStoneNoiseParams, enableStoneNoiseMaterial, type StoneScarParams }
 import { mergeSystemBodies, type BodyCollision, type SystemBody } from './systemBodies'
 import type { PlanetBody, SolarSystem } from './solarSystem'
 import { orbitRadiusAt, planetDisplayScale } from './orbit'
+import {
+  setCollisionAbsorbTarget,
+  spawnCollisionDebris,
+  type FxParticleSystem,
+} from './fxParticles'
 
 export const ACCRETION_DURATION = 1.7
 
-const DEBRIS_COUNT = 48
 const _mid = new THREE.Vector3()
 const _tmp = new THREE.Vector3()
 const _orbitA = new THREE.Vector3()
 const _orbitB = new THREE.Vector3()
+const _impactDir = new THREE.Vector3()
 
 export type AccretionAnim = {
   survivorId: string
@@ -27,8 +32,6 @@ export type AccretionAnim = {
   root: THREE.Group
   flash: THREE.Mesh
   flashLight: THREE.PointLight
-  debris: THREE.Points
-  debrisVel: Float32Array
   preview: THREE.Mesh
   survivorStartScale: number
   absorbedStartScale: number
@@ -79,6 +82,7 @@ export function startAccretionAnim(
   collision: BodyCollision,
   survivorBody: SystemBody,
   absorbedBody: SystemBody,
+  fx?: FxParticleSystem | null,
 ): AccretionAnim {
   const mergedPreview = mergeSystemBodies(survivorBody, absorbedBody, collision)
   const built = buildFormedPlanetGeometry(mergedPreview.planet)
@@ -142,42 +146,27 @@ export function startAccretionAnim(
   const flashLight = new THREE.PointLight(0xffd9a0, 2.4, 3.5, 2)
   root.add(flashLight)
 
-  const positions = new Float32Array(DEBRIS_COUNT * 3)
-  const debrisVel = new Float32Array(DEBRIS_COUNT * 3)
   survivor.holder.getWorldPosition(_orbitA)
   absorbed.holder.getWorldPosition(_orbitB)
   _mid.lerpVectors(_orbitA, _orbitB, 0.5)
-  for (let i = 0; i < DEBRIS_COUNT; i++) {
-    positions[i * 3] = _mid.x
-    positions[i * 3 + 1] = _mid.y
-    positions[i * 3 + 2] = _mid.z
-    const dir = new THREE.Vector3(
-      Math.random() * 2 - 1,
-      Math.random() * 2 - 1,
-      Math.random() * 2 - 1,
-    )
-    if (dir.lengthSq() < 1e-6) dir.set(1, 0.2, 0)
-    dir.normalize().multiplyScalar(0.55 + Math.random() * 1.1)
-    debrisVel[i * 3] = dir.x
-    debrisVel[i * 3 + 1] = dir.y
-    debrisVel[i * 3 + 2] = dir.z
-  }
-  const debrisGeo = new THREE.BufferGeometry()
-  debrisGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  const debrisColor = new THREE.Color(collision.color || '#c4b49a')
-  const debrisMat = new THREE.PointsMaterial({
-    color: debrisColor,
-    size: 0.05,
-    transparent: true,
-    opacity: 0.92,
-    depthWrite: false,
-    sizeAttenuation: true,
-  })
-  const debris = new THREE.Points(debrisGeo, debrisMat)
-  root.add(debris)
-
   flash.position.copy(_mid)
   flashLight.position.copy(_mid)
+
+  // Dual-stream debris (return arc + scatter) in the shared FX system.
+  if (fx) {
+    _impactDir.set(...collision.direction)
+    if (_impactDir.lengthSq() < 1e-8) _impactDir.subVectors(_orbitA, _orbitB)
+    if (_impactDir.lengthSq() < 1e-8) _impactDir.set(1, 0.1, 0)
+    // Direction is stored as flight toward the planet; convert to world via survivor pivot.
+    survivor.holder.updateWorldMatrix(true, false)
+    _impactDir.transformDirection(survivor.holder.matrixWorld)
+    spawnCollisionDebris(fx, {
+      origin: _mid.clone(),
+      color: collision.color || '#c4b49a',
+      impactDir: _impactDir,
+      absorbTarget: _orbitA.clone(),
+    })
+  }
 
   const previewMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -232,8 +221,6 @@ export function startAccretionAnim(
     root,
     flash,
     flashLight,
-    debris,
-    debrisVel,
     preview,
     survivorStartScale: survivor.mesh.scale.x,
     absorbedStartScale: absorbed.mesh.scale.x,
@@ -258,6 +245,7 @@ export function tickAccretionAnim(
   system: SolarSystem,
   dt: number,
   playing: boolean,
+  fx?: FxParticleSystem | null,
 ): boolean {
   const survivor = system.planets.find((p) => p.id === anim.survivorId)
   const absorbed = system.planets.find((p) => p.id === anim.absorbedId)
@@ -295,22 +283,7 @@ export function tickAccretionAnim(
   ;(anim.flash.material as THREE.MeshBasicMaterial).opacity = 0.15 + flashPeak * 0.85
   anim.flashLight.intensity = flashPeak * 3.2
 
-  const pos = anim.debris.geometry.getAttribute('position') as THREE.BufferAttribute
-  const pull = e * e
-  for (let i = 0; i < DEBRIS_COUNT; i++) {
-    const ix = i * 3
-    // Burst out early, then get sucked toward the merge center.
-    const burst = Math.min(1, t / 0.35)
-    const vx = anim.debrisVel[ix]!
-    const vy = anim.debrisVel[ix + 1]!
-    const vz = anim.debrisVel[ix + 2]!
-    const ox = _mid.x + vx * burst * (1 - pull * 0.92)
-    const oy = _mid.y + vy * burst * (1 - pull * 0.92)
-    const oz = _mid.z + vz * burst * (1 - pull * 0.92)
-    pos.setXYZ(i, ox, oy, oz)
-  }
-  pos.needsUpdate = true
-  ;(anim.debris.material as THREE.PointsMaterial).opacity = t < 0.75 ? 0.85 : 0.85 * (1 - (t - 0.75) / 0.25)
+  if (fx) setCollisionAbsorbTarget(fx, _orbitA)
 
   // Grow the fossil imprint out from the contact site.
   const stain = easeInOut(Math.min(1, Math.max(0, (t - 0.08) / 0.72)))
@@ -355,9 +328,6 @@ export function disposeAccretionAnim(anim: AccretionAnim | null | undefined) {
   anim.flash.geometry.dispose()
   ;(anim.flash.material as THREE.Material).dispose()
   anim.flashLight.removeFromParent()
-  anim.debris.removeFromParent()
-  anim.debris.geometry.dispose()
-  ;(anim.debris.material as THREE.Material).dispose()
   anim.preview.removeFromParent()
   anim.preview.geometry.dispose()
   anim.previewMat.dispose()

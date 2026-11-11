@@ -434,14 +434,18 @@ export default function App() {
     <div className={`app ${isEdit ? 'app--edit' : 'app--view'}${showOrbitPalette ? ' app--orbit' : ''}`}>
       <main className="app__stage">
         <header className="app__brand">
-          <h1 className="app__title">{viewTitle}</h1>
-          <button
-            type="button"
-            className="app__home-link"
-            onClick={() => setInProject(false)}
-          >
-            Home
-          </button>
+          <h1 className="app__title">
+            <button
+              type="button"
+              className="app__title-home"
+              onClick={() => setInProject(false)}
+              title="Home"
+              aria-label="Home — Data Fossil"
+            >
+              {viewTitle}
+            </button>
+          </h1>
+          <p className="app__brand-note">The digits you enter shape the stone.</p>
         </header>
 
         <div className="app__chrome-right">
@@ -511,7 +515,10 @@ export default function App() {
               type="button"
               className="app__memory-card-close"
               aria-label="Close memory"
-              onClick={() => setSurfaceMemory(null)}
+              onClick={() => {
+                setSurfaceMemory(null)
+                canvasRef.current?.notifySurfaceMemoryClosed()
+              }}
             >
               ×
             </button>
