@@ -2,10 +2,7 @@ import {
   ORBIT_PACE_MAX,
   ORBIT_PACE_MIN,
   normalizePlanetOrbit,
-  orbitRadiusAt,
   orbitSpeedWithPace,
-  orbitTiltRadians,
-  resolveEccentricity,
   resolveOrbitDistance,
   type OrbitSystemSettings,
   type PlanetOrbit,
@@ -39,30 +36,34 @@ export function forwardDelta(from: number, to: number) {
 }
 
 /**
- * Build an encounter orbit for `mover` so it shares the target track and
- * arrives near `meetAngle01` (0–1 around the target orbit) in a short wait.
- * Contact still requires actual 3D overlap — this only aims the paths.
+ * Aim `mover` onto the target's track from its current phase, then chase faster
+ * until surfaces can meet. Keeps the mover's phase so the re-orbit reads as a
+ * track change toward the target rather than an angular teleport.
  */
 export function computeEncounterOrbit(
   mover: SystemBody,
   target: SystemBody,
-  meetAngle01: number,
   settings: OrbitSystemSettings,
   targetIndex = 0,
 ): EncounterPlan {
-  const meetPhase = wrapTau(clamp(meetAngle01, 0, 1) * TAU)
   const distance = resolveOrbitDistance(target.orbit, targetIndex, settings.spread)
-  const pace = clamp(Math.max(target.orbit.pace * 1.55, target.orbit.pace + 0.35), ORBIT_PACE_MIN, ORBIT_PACE_MAX)
+  const pace = clamp(
+    Math.max(target.orbit.pace * 1.7, target.orbit.pace + 0.45),
+    ORBIT_PACE_MIN,
+    ORBIT_PACE_MAX,
+  )
 
   const omegaT = orbitSpeedWithPace(distance, target.orbit.pace)
   const omegaM = orbitSpeedWithPace(distance, pace)
+  const dOmega = Math.max(1e-4, omegaM - omegaT)
 
-  let deltaT = forwardDelta(target.phase, meetPhase)
-  // Avoid an instant hit if the target is already at / past the mark.
-  if (deltaT < 0.55) deltaT += TAU
-  const etaSeconds = deltaT / Math.max(1e-4, omegaT)
-
-  const phase = wrapTau(meetPhase - omegaM * etaSeconds)
+  // Stay at the mover's current angle; slide onto the shared track and catch up.
+  const phase = mover.phase
+  let gap = forwardDelta(phase, target.phase)
+  // Already nearly overlapping — give a short visible chase lap.
+  if (gap < 0.4) gap += TAU
+  const etaSeconds = clamp(gap / dOmega, 1.2, 28)
+  const meetPhase = wrapTau(target.phase + omegaT * etaSeconds)
 
   const orbit = normalizePlanetOrbit(
     {
@@ -82,44 +83,6 @@ export function computeEncounterOrbit(
     phase,
     nodeAngle: target.nodeAngle,
   }
-}
-
-/** Local position on a body's orbital plane for a given phase (pre-pivot). */
-export function encounterLocalPoint(
-  body: SystemBody,
-  phase: number,
-  settings: OrbitSystemSettings,
-  bodyIndex = 0,
-): [number, number, number] {
-  const a = resolveOrbitDistance(body.orbit, bodyIndex, settings.spread)
-  const e = resolveEccentricity(body.orbit, settings.shape)
-  const r = orbitRadiusAt(a, e, phase)
-  return [Math.cos(phase) * r, 0, Math.sin(phase) * r]
-}
-
-/** World-ish position after applying the body's orbit tilt / node (matches solar pivot). */
-export function encounterPreviewWorld(
-  body: SystemBody,
-  phase: number,
-  settings: OrbitSystemSettings,
-  bodyIndex = 0,
-): [number, number, number] {
-  const [lx, ly, lz] = encounterLocalPoint(body, phase, settings, bodyIndex)
-  const tilt = orbitTiltRadians(body.orbit.tilt)
-  const node = body.nodeAngle + Math.PI * 0.5
-  // Match pivot.rotation.set(tilt, node, 0, 'YXZ') then local (x,0,z).
-  const cy = Math.cos(node)
-  const sy = Math.sin(node)
-  const cx = Math.cos(tilt)
-  const sx = Math.sin(tilt)
-  // YXZ: Ry * Rx
-  const x1 = lx
-  const y1 = ly * cx - lz * sx
-  const z1 = ly * sx + lz * cx
-  const x2 = x1 * cy + z1 * sy
-  const y2 = y1
-  const z2 = -x1 * sy + z1 * cy
-  return [x2, y2, z2]
 }
 
 export function formatEta(seconds: number) {

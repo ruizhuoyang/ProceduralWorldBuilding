@@ -6,7 +6,11 @@ import { STLExporter } from 'three/addons/exporters/STLExporter.js'
 import { buildFossilGeometry } from '../lib/buildFossilGeometry'
 import type { FossilHistoryEntry } from '../lib/history'
 import { DEFAULT_ORBIT_SYSTEM, type OrbitSystemSettings } from '../lib/orbit'
-import { buildFormedPlanetGeometry } from '../lib/planetFormation'
+import {
+  buildFormedPlanetGeometry,
+  pickScarMemoryAt,
+  type SurfaceMemoryInfo,
+} from '../lib/planetFormation'
 import {
   applySolarPhases,
   captureSolarPhases,
@@ -15,6 +19,7 @@ import {
   ORBIT_HOME,
   setSolarAtmosphereState,
   setSolarSystemWireframe,
+  syncPlanetLabelHints,
   syncSolarOrbits,
   tickSolarSystem,
   type SolarSystem,
@@ -33,9 +38,7 @@ import {
   tickAccretionAnim,
   type AccretionAnim,
 } from '../lib/accretionAnim'
-import { encounterLocalPoint } from '../lib/encounterOrbit'
 import { systemMeshKey, type BodyCollision, type SystemBody } from '../lib/systemBodies'
-import type { EncounterPreviewState } from './OrbitPalette'
 import type {
   AtmosphereParams,
   DigitRegion,
@@ -51,6 +54,8 @@ export type FossilCanvasHandle = {
   exportSTL: (filename?: string) => void
   /** Live orbital phases for session bodies (for demo-friendly inserts). */
   getSolarPhases: () => Record<string, number>
+  /** Drop an in-flight accretion so a removed body cannot reappear on finish. */
+  cancelAccretion: () => void
 }
 
 type FossilCanvasProps = {
@@ -70,14 +75,18 @@ type FossilCanvasProps = {
   surfaceView: boolean
   /** Bodies currently in the stellar system (session). */
   systemBodies: SystemBody[]
-  /** Body to show in surface view when set; otherwise studio rock. */
+  /** System body for Surface / Interior when set; otherwise studio rock. */
   surfaceBody: SystemBody | null
   historyEntries: FossilHistoryEntry[]
   orbitSettings?: OrbitSystemSettings
-  /** Planned meeting spot for Encounter Orbit (scene marker). */
-  encounterPreview?: EncounterPreviewState
   onSeedChange: (seed: number) => void
   onBodiesCollide: (collision: BodyCollision) => void
+  onSurfaceMemoryPick?: (memory: SurfaceMemoryInfo | null) => void
+  /** Body waiting for a collide-target click in the stellar scene. */
+  collideSelectMoverId?: string | null
+  /** Active chase pair after Collide with… is confirmed. */
+  approachPair?: { moverId: string; targetId: string } | null
+  onPickCollideTarget?: (targetId: string) => void
 }
 
 type SceneBag = {
@@ -116,7 +125,6 @@ type SceneBag = {
   collisionLockUntil: number
   surfaceBodyId: string | null
   accretion: AccretionAnim | null
-  encounterMarker: THREE.Group | null
 }
 
 type SurfaceFpsState = {
@@ -124,12 +132,19 @@ type SurfaceFpsState = {
   pitch: number
   keys: Set<string>
   dragging: boolean
+  dragMoved: boolean
+  downX: number
+  downY: number
   lastX: number
   lastY: number
+  hoverMemory: boolean
+  pickRaycaster: THREE.Raycaster
   raycaster: THREE.Raycaster
   up: THREE.Vector3
   foot: THREE.Vector3
 }
+
+const SURFACE_CLICK_SLOP = 6
 
 const HOME = {
   position: new THREE.Vector3(2.55, 1.35, 2.95),
@@ -154,10 +169,13 @@ const _surfaceUp = new THREE.Vector3(0, 1, 0)
 const STUDIO_FOV = 40
 const INTERIOR_FOV = 80
 const SURFACE_FOV = 100
-const SURFACE_EYE_HEIGHT = 0.014
+/** Stand close to the crust without sinking into local noise / imprint relief. */
+const SURFACE_EYE_HEIGHT = 0.036
+/** Near must stay well below eye height so looking down does not slice the mesh. */
+const SURFACE_NEAR = 0.0012
 const SURFACE_MOVE_SPEED = 0.7
 const SURFACE_LOOK_SENS = 0.0028
-const SURFACE_PITCH_MIN = -1.15
+const SURFACE_PITCH_MIN = -0.98
 const SURFACE_PITCH_MAX = 1.05
 const VIEW_SPIN_RAD_PER_SEC = 0.35
 
@@ -343,33 +361,47 @@ function applyStudioLens(bag: SceneBag) {
   bag.camera.updateProjectionMatrix()
 }
 
+/** Snap OrbitControls hard — damping otherwise keeps dragging the view after Reset. */
+function snapOrbitControls(
+  bag: SceneBag,
+  position: THREE.Vector3,
+  target: THREE.Vector3,
+  distances?: { min: number; max: number },
+) {
+  const { controls, camera } = bag
+  const hadDamping = controls.enableDamping
+  controls.enableDamping = false
+  if (distances) {
+    controls.minDistance = distances.min
+    controls.maxDistance = distances.max
+  }
+  controls.target.copy(target)
+  camera.position.copy(position)
+  camera.up.set(0, 1, 0)
+  controls.update()
+  controls.saveState()
+  controls.enableDamping = hadDamping
+}
+
 function setOrbitCamera(bag: SceneBag, on: boolean) {
   applyStudioLens(bag)
   if (on) {
-    bag.camera.position.copy(ORBIT_HOME.position)
-    bag.controls.target.copy(ORBIT_HOME.target)
-    bag.controls.minDistance = 3
-    bag.controls.maxDistance = 48
+    snapOrbitControls(bag, ORBIT_HOME.position, ORBIT_HOME.target, { min: 3, max: 48 })
   } else {
-    bag.camera.position.copy(HOME.position)
-    bag.controls.target.copy(HOME.target)
-    bag.controls.minDistance = 1.2
-    bag.controls.maxDistance = 12
+    snapOrbitControls(bag, HOME.position, HOME.target, { min: 1.2, max: 12 })
   }
-  bag.controls.update()
 }
 
 function setInteriorCamera(bag: SceneBag) {
   bag.rock.rotation.set(0, 0, 0)
   bag.camera.fov = INTERIOR_FOV
   bag.camera.near = 0.02
-  bag.camera.position.copy(INTERIOR_HOME.position)
-  bag.controls.target.copy(INTERIOR_HOME.target)
-  bag.controls.minDistance = 0.001
-  bag.controls.maxDistance = 0.15
   bag.controls.enablePan = false
   bag.camera.updateProjectionMatrix()
-  bag.controls.update()
+  snapOrbitControls(bag, INTERIOR_HOME.position, INTERIOR_HOME.target, {
+    min: 0.001,
+    max: 0.15,
+  })
 }
 
 function pickSurfaceFoot(geometry: THREE.BufferGeometry, outFoot: THREE.Vector3, outNormal: THREE.Vector3) {
@@ -430,6 +462,21 @@ function applySurfacePose(bag: SceneBag) {
   const fps = bag.surfaceFps
   if (!fps) return
   surfaceLookBasis(fps.up, fps.yaw, fps.pitch, _surfaceF, _surfaceR)
+
+  // Re-seat the foot with a short normal cast so steep imprint relief cannot
+  // leave the FrontSide lens underground (near-clip "破面").
+  _surfaceFrom.copy(fps.foot).addScaledVector(fps.up, 0.5)
+  fps.raycaster.set(_surfaceFrom, _surfaceDir.copy(fps.up).negate())
+  const clearanceHits = fps.raycaster.intersectObject(bag.rock, false)
+  if (clearanceHits.length > 0) {
+    const hit = clearanceHits[0]!
+    // Ignore distant wrong hits (e.g. far side of the rock through a cave).
+    if (hit.distance < 0.65) {
+      fps.foot.copy(hit.point)
+      if (hit.normal) fps.up.copy(hit.normal).normalize()
+    }
+  }
+
   bag.camera.position.copy(fps.foot).addScaledVector(fps.up, SURFACE_EYE_HEIGHT)
   bag.camera.up.copy(fps.up)
   bag.camera.lookAt(_surfaceV.copy(bag.camera.position).add(_surfaceF))
@@ -443,8 +490,13 @@ function initSurfaceFps(bag: SceneBag, seekDir?: THREE.Vector3 | null) {
       pitch: -0.12,
       keys: new Set(),
       dragging: false,
+      dragMoved: false,
+      downX: 0,
+      downY: 0,
       lastX: 0,
       lastY: 0,
+      hoverMemory: false,
+      pickRaycaster: new THREE.Raycaster(),
       raycaster: new THREE.Raycaster(),
       up: new THREE.Vector3(0, 1, 0),
       foot: new THREE.Vector3(),
@@ -453,7 +505,8 @@ function initSurfaceFps(bag: SceneBag, seekDir?: THREE.Vector3 | null) {
   const fps = bag.surfaceFps
   fps.keys.clear()
   fps.dragging = false
-  fps.pitch = -0.12
+  // Look down enough that a landmark underfoot / nearby stain sits in the view.
+  fps.pitch = seekDir && seekDir.lengthSq() > 1e-8 ? -0.48 : -0.18
   const seek = seekDir && seekDir.lengthSq() > 1e-8 ? seekDir.clone().normalize() : SURFACE_SEEK
   pickSurfaceFoot(bag.rock.geometry, fps.foot, fps.up)
   if (!raycastSurface(bag, seek, fps.foot, fps.up)) {
@@ -478,7 +531,7 @@ function setSurfaceCamera(bag: SceneBag, seekDir?: THREE.Vector3 | null) {
   bag.rock.rotation.set(0, 0, 0)
   bag.controls.enabled = false
   bag.camera.fov = SURFACE_FOV
-  bag.camera.near = 0.008
+  bag.camera.near = SURFACE_NEAR
   bag.camera.updateProjectionMatrix()
   initSurfaceFps(bag, seekDir)
   applySurfacePose(bag)
@@ -515,8 +568,41 @@ function stepSurfaceFps(bag: SceneBag, dt: number) {
 }
 
 function leaveSurfaceCamera(bag: SceneBag) {
-  if (bag.surfaceFps) bag.surfaceFps.keys.clear()
+  if (bag.surfaceFps) {
+    bag.surfaceFps.keys.clear()
+    bag.surfaceFps.hoverMemory = false
+  }
   bag.controls.enabled = true
+  bag.renderer.domElement.style.cursor = ''
+}
+
+function pickSurfaceMemoryFromClient(
+  bag: SceneBag,
+  body: SystemBody | null,
+  clientX: number,
+  clientY: number,
+): SurfaceMemoryInfo | null {
+  const fps = bag.surfaceFps
+  if (!body || !fps || body.planet.scars.length === 0) return null
+  const canvas = bag.renderer.domElement
+  const rect = canvas.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return null
+  const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1
+  const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1
+  fps.pickRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), bag.camera)
+  const hits = fps.pickRaycaster.intersectObject(bag.rock, false)
+  if (hits.length === 0) {
+    // Standing on a mark: still allow a click when the ray grazes past the mesh.
+    return pickScarMemoryAt(body.planet.scars, fps.foot)
+  }
+  const local = bag.rock.worldToLocal(hits[0]!.point.clone())
+  const fromHit = pickScarMemoryAt(body.planet.scars, local)
+  if (fromHit) return fromHit
+  // Near-foot clicks while standing on a vein / band.
+  if (local.distanceTo(fps.foot) < 0.28) {
+    return pickScarMemoryAt(body.planet.scars, fps.foot)
+  }
+  return null
 }
 
 function applyCameraRig(bag: SceneBag) {
@@ -524,79 +610,6 @@ function applyCameraRig(bag: SceneBag) {
   else if (bag.interiorView) setInteriorCamera(bag)
   else if (bag.surfaceView) setSurfaceCamera(bag)
   else setOrbitCamera(bag, false)
-}
-
-function ensureEncounterMarker(bag: SceneBag) {
-  if (bag.encounterMarker) return bag.encounterMarker
-  const root = new THREE.Group()
-  root.name = 'encounterPreview'
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.12, 0.18, 28),
-    new THREE.MeshBasicMaterial({
-      color: 0xc4a574,
-      transparent: true,
-      opacity: 0.85,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    }),
-  )
-  ring.rotation.x = -Math.PI / 2
-  const dot = new THREE.Mesh(
-    new THREE.SphereGeometry(0.05, 12, 10),
-    new THREE.MeshBasicMaterial({ color: 0xe8d2a8, transparent: true, opacity: 0.95 }),
-  )
-  const labelEl = document.createElement('div')
-  labelEl.className = 'fossil-planet-label'
-  labelEl.textContent = 'Meet'
-  const label = new CSS2DObject(labelEl)
-  label.position.set(0, 0.22, 0)
-  root.add(ring)
-  root.add(dot)
-  root.add(label)
-  bag.encounterMarker = root
-  return root
-}
-
-function clearEncounterMarker(bag: SceneBag) {
-  const marker = bag.encounterMarker
-  if (!marker) return
-  marker.traverse((obj) => {
-    const mesh = obj as THREE.Mesh
-    if (mesh.geometry) mesh.geometry.dispose()
-    const mat = mesh.material
-    if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
-    else if (mat) mat.dispose()
-    const css = obj as CSS2DObject
-    if (css.element?.parentNode) css.element.parentNode.removeChild(css.element)
-  })
-  if (marker.parent) marker.parent.remove(marker)
-  bag.encounterMarker = null
-}
-
-function syncEncounterMarker(
-  bag: SceneBag,
-  preview: EncounterPreviewState,
-  bodies: SystemBody[],
-  settings: OrbitSystemSettings,
-) {
-  if (!bag.solar || !preview) {
-    if (bag.encounterMarker) bag.encounterMarker.visible = false
-    return
-  }
-  const targetBody = bodies.find((b) => b.id === preview.targetId)
-  const targetPlanet = bag.solar.planets.find((p) => p.id === preview.targetId)
-  if (!targetBody || !targetPlanet) {
-    if (bag.encounterMarker) bag.encounterMarker.visible = false
-    return
-  }
-  const marker = ensureEncounterMarker(bag)
-  if (marker.parent !== targetPlanet.pivot) {
-    targetPlanet.pivot.add(marker)
-  }
-  const index = Math.max(0, bodies.findIndex((b) => b.id === targetBody.id))
-  const [x, y, z] = encounterLocalPoint(targetBody, preview.meetPhase, settings, index)
-  marker.position.set(x, y, z)
-  marker.visible = true
 }
 
 const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function FossilCanvas(
@@ -615,9 +628,12 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     surfaceBody,
     historyEntries,
     orbitSettings = DEFAULT_ORBIT_SYSTEM,
-    encounterPreview = null,
     onSeedChange,
     onBodiesCollide,
+    onSurfaceMemoryPick,
+    collideSelectMoverId = null,
+    approachPair = null,
+    onPickCollideTarget,
   },
   ref,
 ) {
@@ -635,10 +651,15 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
   const surfaceBodyRef = useRef(surfaceBody)
   const historyRef = useRef(historyEntries)
   const orbitSettingsRef = useRef(orbitSettings)
-  const encounterPreviewRef = useRef(encounterPreview)
   const wireframeRef = useRef(wireframe)
   const onSeedChangeRef = useRef(onSeedChange)
   const onBodiesCollideRef = useRef(onBodiesCollide)
+  const onSurfaceMemoryPickRef = useRef(onSurfaceMemoryPick)
+  const collideSelectMoverIdRef = useRef(collideSelectMoverId)
+  const approachPairRef = useRef(approachPair)
+  const onPickCollideTargetRef = useRef(onPickCollideTarget)
+  const orbitPickRaycaster = useRef(new THREE.Raycaster())
+  const orbitPickNdc = useRef(new THREE.Vector2())
 
   useEffect(() => {
     paramsRef.current = params
@@ -680,6 +701,21 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     onBodiesCollideRef.current = onBodiesCollide
   }, [onBodiesCollide])
   useEffect(() => {
+    onSurfaceMemoryPickRef.current = onSurfaceMemoryPick
+  }, [onSurfaceMemoryPick])
+  useEffect(() => {
+    collideSelectMoverIdRef.current = collideSelectMoverId
+    const bag = bagRef.current
+    if (!bag) return
+    bag.renderer.domElement.style.cursor = collideSelectMoverId ? 'crosshair' : ''
+  }, [collideSelectMoverId])
+  useEffect(() => {
+    approachPairRef.current = approachPair
+  }, [approachPair])
+  useEffect(() => {
+    onPickCollideTargetRef.current = onPickCollideTarget
+  }, [onPickCollideTarget])
+  useEffect(() => {
     historyRef.current = historyEntries
   }, [historyEntries])
   useEffect(() => {
@@ -692,9 +728,6 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     orbitSettingsRef.current = orbitSettings
   }, [orbitSettings])
   useEffect(() => {
-    encounterPreviewRef.current = encounterPreview
-  }, [encounterPreview])
-  useEffect(() => {
     wireframeRef.current = wireframe
   }, [wireframe])
 
@@ -704,16 +737,20 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       if (!bag) return
       if (bag.orbitSystem) {
         setOrbitCamera(bag, true)
-      } else if (bag.interiorView) {
-        setInteriorCamera(bag)
-      } else if (bag.surfaceView) {
-        setSurfaceCamera(bag)
-      } else {
-        bag.camera.position.copy(HOME.position)
-        bag.controls.target.copy(HOME.target)
-        bag.rock.rotation.set(0, 0, 0)
-        bag.controls.update()
+        return
       }
+      if (bag.interiorView) {
+        setInteriorCamera(bag)
+        return
+      }
+      if (bag.surfaceView) {
+        setSurfaceCamera(bag)
+        return
+      }
+      // Studio rock: upright mesh + home camera (clear orbit damping so it sticks).
+      bag.rock.rotation.set(0, 0, 0)
+      applyStudioLens(bag)
+      snapOrbitControls(bag, HOME.position, HOME.target, { min: 1.2, max: 12 })
     },
     captureThumbnail: () => {
       const bag = bagRef.current
@@ -759,6 +796,13 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       URL.revokeObjectURL(url)
     },
     getSolarPhases: () => captureSolarPhases(bagRef.current?.solar ?? null),
+    cancelAccretion: () => {
+      const bag = bagRef.current
+      if (!bag?.accretion) return
+      disposeAccretionAnim(bag.accretion)
+      bag.accretion = null
+      bag.collisionLockUntil = performance.now() + 400
+    },
   }))
 
   useEffect(() => {
@@ -863,7 +907,6 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       collisionLockUntil: 0,
       surfaceBodyId: null,
       accretion: null,
-      encounterMarker: null,
     }
     bagRef.current = bag
     applyLighting(bag, lightingRef.current)
@@ -889,8 +932,9 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     }
 
     const rebuild = () => {
-      // Surface of a system body uses formed geometry instead of the studio fossil.
-      const focus = bag.surfaceView ? surfaceBodyRef.current : null
+      // Surface / Interior of a system body uses that planet's formed mesh + scars.
+      const focus =
+        bag.surfaceView || bag.interiorView ? surfaceBodyRef.current : null
       if (focus) {
         const built = buildFormedPlanetGeometry(focus.planet)
         const prev = bag.rock.geometry
@@ -985,7 +1029,6 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
           disposeAccretionAnim(bag.accretion)
           bag.accretion = null
         }
-        clearEncounterMarker(bag)
         clearSolar(bag)
         bag.rock.visible = true
         bag.worldGroup.visible =
@@ -1009,6 +1052,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         bag.rock.visible = true
         bag.mappingGroup.visible = false
         bag.worldGroup.visible = false
+        rebuild()
         syncAtmosphere(bag, wireframeRef.current)
         applyLighting(bag, lightingRef.current)
         applyCameraRig(bag)
@@ -1019,6 +1063,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         applyLighting(bag, lightingRef.current)
         if (!bag.orbitSystem) applyCameraRig(bag)
         if (showMappingRef.current && !bag.orbitSystem && !bag.surfaceView) rebuild()
+        else if (!bag.orbitSystem && !bag.surfaceView && !surfaceBodyRef.current) rebuild()
       }
     }
 
@@ -1058,7 +1103,6 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       const dt = bag.clock.getDelta()
 
       if (bag.orbitSystem && bag.solar) {
-        syncEncounterMarker(bag, encounterPreviewRef.current, systemBodiesRef.current, orbitSettingsRef.current)
         if (bag.accretion) {
           const done = tickAccretionAnim(
             bag.accretion,
@@ -1106,7 +1150,6 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
           }
         }
       } else {
-        clearEncounterMarker(bag)
         if (bag.viewportMode === 'view' && !isLookAroundView(bag)) {
           bag.rock.rotation.y += dt * VIEW_SPIN_RAD_PER_SEC
         }
@@ -1190,32 +1233,60 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     const onPointerDown = (e: PointerEvent) => {
       if (!bag.surfaceView || !bag.surfaceFps || e.button !== 0) return
       bag.surfaceFps.dragging = true
+      bag.surfaceFps.dragMoved = false
+      bag.surfaceFps.downX = e.clientX
+      bag.surfaceFps.downY = e.clientY
       bag.surfaceFps.lastX = e.clientX
       bag.surfaceFps.lastY = e.clientY
       canvasEl.setPointerCapture(e.pointerId)
     }
     const onPointerMove = (e: PointerEvent) => {
       const fps = bag.surfaceFps
-      if (!bag.surfaceView || !fps?.dragging) return
-      const dx = e.clientX - fps.lastX
-      const dy = e.clientY - fps.lastY
-      fps.lastX = e.clientX
-      fps.lastY = e.clientY
-      fps.yaw -= dx * SURFACE_LOOK_SENS
-      fps.pitch = Math.min(
-        SURFACE_PITCH_MAX,
-        Math.max(SURFACE_PITCH_MIN, fps.pitch - dy * SURFACE_LOOK_SENS),
-      )
-      applySurfacePose(bag)
+      if (!bag.surfaceView || !fps) return
+      if (fps.dragging) {
+        const totalDx = e.clientX - fps.downX
+        const totalDy = e.clientY - fps.downY
+        if (Math.hypot(totalDx, totalDy) > SURFACE_CLICK_SLOP) fps.dragMoved = true
+        const dx = e.clientX - fps.lastX
+        const dy = e.clientY - fps.lastY
+        fps.lastX = e.clientX
+        fps.lastY = e.clientY
+        fps.yaw -= dx * SURFACE_LOOK_SENS
+        fps.pitch = Math.min(
+          SURFACE_PITCH_MAX,
+          Math.max(SURFACE_PITCH_MIN, fps.pitch - dy * SURFACE_LOOK_SENS),
+        )
+        applySurfacePose(bag)
+        return
+      }
+      const memory = pickSurfaceMemoryFromClient(bag, surfaceBodyRef.current, e.clientX, e.clientY)
+      const hovering = memory !== null
+      if (hovering !== fps.hoverMemory) {
+        fps.hoverMemory = hovering
+        canvasEl.style.cursor = hovering ? 'pointer' : ''
+      }
+    }
+    const finishSurfaceClick = (clientX: number, clientY: number) => {
+      const memory = pickSurfaceMemoryFromClient(bag, surfaceBodyRef.current, clientX, clientY)
+      onSurfaceMemoryPickRef.current?.(memory)
     }
     const onPointerUp = (e: PointerEvent) => {
-      if (!bag.surfaceFps) return
-      bag.surfaceFps.dragging = false
+      const fps = bag.surfaceFps
+      if (!fps) return
+      // Treat as a click unless the look-drag clearly moved (ignore button quirks on synthetic events).
+      const wasClick = bag.surfaceView && fps.dragging && !fps.dragMoved
+      fps.dragging = false
       try {
         canvasEl.releasePointerCapture(e.pointerId)
       } catch {
         /* already released */
       }
+      if (wasClick) finishSurfaceClick(e.clientX, e.clientY)
+    }
+    const onClick = (e: MouseEvent) => {
+      // Fallback for environments that collapse pointer sequences oddly.
+      if (!bag.surfaceView || !bag.surfaceFps || bag.surfaceFps.dragMoved) return
+      finishSurfaceClick(e.clientX, e.clientY)
     }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
@@ -1223,6 +1294,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     canvasEl.addEventListener('pointermove', onPointerMove)
     canvasEl.addEventListener('pointerup', onPointerUp)
     canvasEl.addEventListener('pointercancel', onPointerUp)
+    canvasEl.addEventListener('click', onClick)
 
     return () => {
       cancelAnimationFrame(frame)
@@ -1233,6 +1305,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       canvasEl.removeEventListener('pointermove', onPointerMove)
       canvasEl.removeEventListener('pointerup', onPointerUp)
       canvasEl.removeEventListener('pointercancel', onPointerUp)
+      canvasEl.removeEventListener('click', onClick)
       bag.controls.dispose()
       disposeMappingShared(bag.mappingGroup)
       clearMapping(bag.mappingGroup)
@@ -1240,7 +1313,6 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         disposeAccretionAnim(bag.accretion)
         bag.accretion = null
       }
-      clearEncounterMarker(bag)
       clearSolar(bag)
       disposeStudioAtmosphere(bag)
       while (bag.worldGroup.children.length > 0) {
@@ -1324,10 +1396,80 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
   }, [systemBodies, orbitSettings])
 
   useEffect(() => {
+    const bag = bagRef.current
+    if (!bag?.orbitSystem || !bag.solar) return
+    syncPlanetLabelHints(
+      bag.solar,
+      {
+        pickMoverId: collideSelectMoverId,
+        approach: approachPair,
+      },
+      (targetId) => onPickCollideTargetRef.current?.(targetId),
+    )
+  }, [collideSelectMoverId, approachPair, systemBodies, orbitSystem])
+
+  useEffect(() => {
+    const bag = bagRef.current
+    if (!bag || !orbitSystem) return
+    const canvasEl = bag.renderer.domElement
+    let downX = 0
+    let downY = 0
+    let moved = false
+
+    const planetFromObject = (obj: THREE.Object3D) => {
+      if (!bag.solar) return undefined
+      let cur: THREE.Object3D | null = obj
+      while (cur) {
+        const match = bag.solar.planets.find((p) => p.mesh === cur || p.holder === cur)
+        if (match) return match
+        cur = cur.parent
+      }
+      return undefined
+    }
+
+    const onDown = (e: PointerEvent) => {
+      if (!collideSelectMoverIdRef.current || e.button !== 0) return
+      downX = e.clientX
+      downY = e.clientY
+      moved = false
+    }
+    const onMove = (e: PointerEvent) => {
+      if (!collideSelectMoverIdRef.current) return
+      if (Math.hypot(e.clientX - downX, e.clientY - downY) > 5) moved = true
+    }
+    const onUp = (e: PointerEvent) => {
+      const moverId = collideSelectMoverIdRef.current
+      if (!moverId || moved || e.button !== 0 || !bag.solar) return
+      const rect = canvasEl.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+      orbitPickNdc.current.set(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      )
+      orbitPickRaycaster.current.setFromCamera(orbitPickNdc.current, bag.camera)
+      const roots = bag.solar.planets.map((p) => p.holder)
+      const hits = orbitPickRaycaster.current.intersectObjects(roots, true)
+      if (hits.length === 0) return
+      const planet = planetFromObject(hits[0]!.object)
+      if (!planet || planet.id === moverId) return
+      onPickCollideTargetRef.current?.(planet.id)
+    }
+
+    canvasEl.addEventListener('pointerdown', onDown)
+    canvasEl.addEventListener('pointermove', onMove)
+    canvasEl.addEventListener('pointerup', onUp)
+    return () => {
+      canvasEl.removeEventListener('pointerdown', onDown)
+      canvasEl.removeEventListener('pointermove', onMove)
+      canvasEl.removeEventListener('pointerup', onUp)
+    }
+  }, [orbitSystem])
+
+  useEffect(() => {
     const bag = bagRef.current as (SceneBag & { rebuild?: () => void }) | null
     if (!bag || bag.orbitSystem) return
-    if (bag.surfaceView) bag.rebuild?.()
-  }, [surfaceBody, surfaceView])
+    if (bag.surfaceView || bag.interiorView) bag.rebuild?.()
+  }, [surfaceBody, surfaceView, interiorView])
 
   return <div className="fossil-canvas" ref={containerRef} aria-label="Data Fossil viewport" />
 })

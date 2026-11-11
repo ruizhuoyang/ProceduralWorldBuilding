@@ -1,12 +1,5 @@
-import { useEffect, useState } from 'react'
-import {
-  GoogleAuthProvider,
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-  type User,
-} from 'firebase/auth'
-import { auth, firebaseReady } from '../firebase'
+import { useState } from 'react'
+import { useAuth } from '../hooks/useAuth'
 import { loadCloudLibrary, saveCloudLibrary } from '../lib/cloudLibrary'
 import type { FossilHistoryEntry } from '../lib/history'
 import type { OrbitSystemSettings } from '../lib/orbit'
@@ -22,29 +15,10 @@ type Props = {
 }
 
 export default function FirebaseControls({ entries, orbit, onLoadLibrary }: Props) {
-  const [user, setUser] = useState<User | null>(null)
-  const [busy, setBusy] = useState(false)
+  const { ready, user, busy, error, signInWithGoogle, signOutUser, run } = useAuth()
   const [message, setMessage] = useState('')
 
-  useEffect(() => {
-    if (!auth) return
-    return onAuthStateChanged(auth, setUser)
-  }, [])
-
-  async function run(action: () => Promise<void>) {
-    setBusy(true)
-    setMessage('')
-    try {
-      await action()
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Operation failed. Please try again.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (!firebaseReady || !auth) return null
-  const currentAuth = auth
+  if (!ready) return null
 
   return (
     <div className="firebase-controls" aria-label="Cloud save">
@@ -57,7 +31,8 @@ export default function FirebaseControls({ entries, orbit, onLoadLibrary }: Prop
             type="button"
             disabled={busy}
             onClick={() =>
-              run(async () => {
+              void run(async () => {
+                setMessage('')
                 await saveCloudLibrary(user.uid, entries, orbit)
                 setMessage('Library saved to cloud.')
               })
@@ -69,7 +44,8 @@ export default function FirebaseControls({ entries, orbit, onLoadLibrary }: Prop
             type="button"
             disabled={busy}
             onClick={() =>
-              run(async () => {
+              void run(async () => {
+                setMessage('')
                 const library = await loadCloudLibrary(user.uid)
                 if (!library) {
                   setMessage('No cloud library yet.')
@@ -82,7 +58,16 @@ export default function FirebaseControls({ entries, orbit, onLoadLibrary }: Prop
           >
             Cloud Load
           </button>
-          <button type="button" disabled={busy} onClick={() => run(() => signOut(currentAuth))}>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void (async () => {
+                setMessage('')
+                await signOutUser()
+              })()
+            }
+          >
             Sign out
           </button>
         </>
@@ -91,17 +76,18 @@ export default function FirebaseControls({ entries, orbit, onLoadLibrary }: Prop
           type="button"
           disabled={busy}
           onClick={() =>
-            run(async () => {
-              await signInWithPopup(currentAuth, new GoogleAuthProvider())
-            })
+            void (async () => {
+              setMessage('')
+              await signInWithGoogle()
+            })()
           }
         >
           Sign in with Google
         </button>
       )}
-      {message ? (
+      {message || error ? (
         <span className="firebase-controls__message" role="status">
-          {message}
+          {message || error}
         </span>
       ) : null}
     </div>

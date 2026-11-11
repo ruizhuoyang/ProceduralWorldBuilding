@@ -3,7 +3,8 @@ import Controls from './components/Controls'
 import FirebaseControls from './components/FirebaseControls'
 import FossilCanvas, { type FossilCanvasHandle } from './components/FossilCanvas'
 import HistoryTray from './components/HistoryTray'
-import OrbitPalette, { type EncounterPreviewState } from './components/OrbitPalette'
+import HomePage from './components/HomePage'
+import OrbitPalette from './components/OrbitPalette'
 import ViewportToolbar from './components/ViewportToolbar'
 import { sanitizeDigits } from './lib/hashDigits'
 import {
@@ -11,9 +12,11 @@ import {
   HISTORY_MAX,
   loadHistory,
   makeHistoryId,
+  normalizeMemoryNote,
   saveHistory,
   type FossilHistoryEntry,
 } from './lib/history'
+import type { SurfaceMemoryInfo } from './lib/planetFormation'
 import {
   DEFAULT_ATMOSPHERE,
   DEFAULT_FOSSIL_PARAMS,
@@ -41,6 +44,7 @@ import {
   type OrbitSystemSettings,
   type PlanetOrbit,
 } from './lib/orbit'
+import { computeEncounterOrbit } from './lib/encounterOrbit'
 import {
   createSystemBodyFromEntry,
   mergeSystemBodies,
@@ -51,9 +55,13 @@ import './App.css'
 
 export default function App() {
   const canvasRef = useRef<FossilCanvasHandle>(null)
+  /** Home stays outside the project; React state below is kept when returning. */
+  const [inProject, setInProject] = useState(false)
 
   const [draftDigits, setDraftDigits] = useState(DEFAULT_FOSSIL_PARAMS.digits)
+  const [draftMemoryNote, setDraftMemoryNote] = useState('')
   const [appliedDigits, setAppliedDigits] = useState(DEFAULT_FOSSIL_PARAMS.digits)
+  const [surfaceMemory, setSurfaceMemory] = useState<SurfaceMemoryInfo | null>(null)
   const [noiseStrength, setNoiseStrength] = useState(DEFAULT_FOSSIL_PARAMS.noiseStrength)
   const [noiseScale, setNoiseScale] = useState(DEFAULT_FOSSIL_PARAMS.noiseScale)
   const [digitStrength, setDigitStrength] = useState(DEFAULT_FOSSIL_PARAMS.digitStrength)
@@ -78,7 +86,12 @@ export default function App() {
   const [surfaceView, setSurfaceView] = useState(false)
   const [systemBodies, setSystemBodies] = useState<SystemBody[]>([])
   const [selectedBodyId, setSelectedBodyId] = useState<string | null>(null)
-  const [encounterPreview, setEncounterPreview] = useState<EncounterPreviewState>(null)
+  /** First body chosen for Collide with… — waiting for a scene/list target click. */
+  const [collideSelectMoverId, setCollideSelectMoverId] = useState<string | null>(null)
+  /** Active chase after a target is confirmed (cleared on merge / cancel system). */
+  const [approachPair, setApproachPair] = useState<{ moverId: string; targetId: string } | null>(
+    null,
+  )
   const [orbitSettings, setOrbitSettings] = useState<OrbitSystemSettings>(DEFAULT_ORBIT_SYSTEM)
   const [seed, setSeed] = useState(0)
   const [revision, setRevision] = useState(0)
@@ -96,8 +109,14 @@ export default function App() {
       setOrbitSystem(false)
       setInteriorView(false)
       setSurfaceView(false)
+      setSurfaceMemory(null)
+      setCollideSelectMoverId(null)
     }
   }
+
+  useEffect(() => {
+    if (!orbitSystem) setCollideSelectMoverId(null)
+  }, [orbitSystem])
 
   useEffect(() => {
     setHistory(loadHistory())
@@ -189,6 +208,7 @@ export default function App() {
     const entry: FossilHistoryEntry = {
       id: makeHistoryId(),
       digits: appliedDigits,
+      memoryNote: normalizeMemoryNote(draftMemoryNote),
       seed,
       thumb,
       createdAt: Date.now(),
@@ -235,6 +255,7 @@ export default function App() {
 
   const handleSelectHistory = (entry: FossilHistoryEntry) => {
     setDraftDigits(entry.digits)
+    setDraftMemoryNote(normalizeMemoryNote(entry.memoryNote))
     setAppliedDigits(entry.digits)
     setNoiseStrength(entry.params.noiseStrength)
     setNoiseScale(entry.params.noiseScale)
@@ -271,6 +292,8 @@ export default function App() {
   }
 
   const handleBodiesCollide = useCallback((collision: BodyCollision) => {
+    setCollideSelectMoverId(null)
+    setApproachPair(null)
     setSystemBodies((prev) => {
       const survivor = prev.find((body) => body.id === collision.survivorId)
       const absorbed = prev.find((body) => body.id === collision.absorbedId)
@@ -302,39 +325,68 @@ export default function App() {
     )
   }
 
-  const handleApplyEncounter = useCallback(
-    (moverId: string, patch: { orbit: PlanetOrbit; phase: number; nodeAngle: number }) => {
+  const handleCancelCollideSelect = useCallback(() => {
+    setCollideSelectMoverId(null)
+  }, [])
+
+  const handleStartCollideSelect = useCallback((moverId: string) => {
+    setSelectedBodyId(moverId)
+    setCollideSelectMoverId(moverId)
+  }, [])
+
+  const handleConfirmCollideTarget = useCallback(
+    (targetId: string) => {
+      const moverId = collideSelectMoverId
+      if (!moverId || targetId === moverId) return
       const livePhases = canvasRef.current?.getSolarPhases() ?? {}
-      setSystemBodies((prev) =>
-        prev.map((body) => {
-          const phase =
-            typeof livePhases[body.id] === 'number' ? livePhases[body.id]! : body.phase
-          if (body.id !== moverId) return { ...body, phase }
+      setSystemBodies((prev) => {
+        const withPhases = prev.map((body) =>
+          typeof livePhases[body.id] === 'number' ? { ...body, phase: livePhases[body.id]! } : body,
+        )
+        const mover = withPhases.find((b) => b.id === moverId)
+        const target = withPhases.find((b) => b.id === targetId)
+        if (!mover || !target) return withPhases
+        const targetIndex = Math.max(
+          0,
+          withPhases.findIndex((b) => b.id === target.id),
+        )
+        const plan = computeEncounterOrbit(mover, target, orbitSettings, targetIndex)
+        setApproachPair({ moverId, targetId })
+        setCollideSelectMoverId(null)
+        setSelectedBodyId(moverId)
+        return withPhases.map((body) => {
+          if (body.id !== moverId) return body
           return {
             ...body,
-            phase: patch.phase,
-            nodeAngle: patch.nodeAngle,
-            orbit: normalizePlanetOrbit(patch.orbit, body.planet.digits),
+            phase: plan.phase,
+            nodeAngle: plan.nodeAngle,
+            orbit: normalizePlanetOrbit(plan.orbit, body.planet.digits),
           }
-        }),
-      )
+        })
+      })
     },
-    [],
+    [collideSelectMoverId, orbitSettings],
   )
 
-  const handleEncounterPreviewChange = useCallback((preview: EncounterPreviewState) => {
-    setEncounterPreview((prev) => {
-      if (!preview) return prev === null ? prev : null
-      if (
-        prev &&
-        prev.targetId === preview.targetId &&
-        Math.abs(prev.meetPhase - preview.meetPhase) < 1e-5
-      ) {
-        return prev
+  useEffect(() => {
+    if (!collideSelectMoverId) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setCollideSelectMoverId(null)
       }
-      return preview
-    })
-  }, [])
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [collideSelectMoverId])
+
+  useEffect(() => {
+    if (!approachPair) return
+    const alive = new Set(systemBodies.map((b) => b.id))
+    if (!alive.has(approachPair.moverId) || !alive.has(approachPair.targetId)) {
+      setApproachPair(null)
+    }
+  }, [systemBodies, approachPair])
 
   const handleLoadCloudLibrary = (payload: {
     entries: FossilHistoryEntry[]
@@ -352,15 +404,44 @@ export default function App() {
   const showOrbitPalette = isView && orbitSystem
   const canOpenOrbit = history.length > 0 || systemBodies.length > 0 || orbitSystem
   const canViewSystemSurface = systemBodies.length > 0
+  const focusSystemBody =
+    canViewSystemSurface && (surfaceView || interiorView) ? selectedBody : null
+  const viewTitle =
+    focusSystemBody && surfaceView
+      ? `${focusSystemBody.label} · Surface`
+      : focusSystemBody && interiorView
+        ? `${focusSystemBody.label} · Interior`
+        : 'Data Fossil'
+
+  const handleRemoveBody = useCallback(
+    (id: string) => {
+      canvasRef.current?.cancelAccretion()
+      setCollideSelectMoverId((prev) => (prev === id ? null : prev))
+      setApproachPair((prev) =>
+        prev && (prev.moverId === id || prev.targetId === id) ? null : prev,
+      )
+      setSurfaceMemory(null)
+      setSystemBodies((prev) => prev.filter((body) => body.id !== id))
+    },
+    [],
+  )
+
+  if (!inProject) {
+    return <HomePage onEnter={() => setInProject(true)} />
+  }
 
   return (
     <div className={`app ${isEdit ? 'app--edit' : 'app--view'}${showOrbitPalette ? ' app--orbit' : ''}`}>
       <main className="app__stage">
         <header className="app__brand">
-          <h1 className="app__title">Data Fossil</h1>
-          <p className="app__tagline">
-            Personal numbers become a unique rock — digits shape bumps, noise gives the stone its skin.
-          </p>
+          <h1 className="app__title">{viewTitle}</h1>
+          <button
+            type="button"
+            className="app__home-link"
+            onClick={() => setInProject(false)}
+          >
+            Home
+          </button>
         </header>
 
         <div className="app__chrome-right">
@@ -413,13 +494,33 @@ export default function App() {
           interiorView={interiorView && isView}
           surfaceView={surfaceView && isView}
           systemBodies={systemBodies}
-          surfaceBody={surfaceView ? selectedBody : null}
+          surfaceBody={focusSystemBody}
           historyEntries={history}
           orbitSettings={orbitSettings}
-          encounterPreview={orbitSystem ? encounterPreview : null}
+          collideSelectMoverId={collideSelectMoverId}
+          approachPair={approachPair}
           onSeedChange={setSeed}
           onBodiesCollide={handleBodiesCollide}
+          onSurfaceMemoryPick={setSurfaceMemory}
+          onPickCollideTarget={handleConfirmCollideTarget}
         />
+
+        {surfaceView && surfaceMemory ? (
+          <aside className="app__memory-card" aria-label="Surface memory">
+            <button
+              type="button"
+              className="app__memory-card-close"
+              aria-label="Close memory"
+              onClick={() => setSurfaceMemory(null)}
+            >
+              ×
+            </button>
+            <p className="app__memory-card-digits">{surfaceMemory.digits || '—'}</p>
+            {surfaceMemory.memoryNote ? (
+              <p className="app__memory-card-note">{surfaceMemory.memoryNote}</p>
+            ) : null}
+          </aside>
+        ) : null}
 
         {isView && (
           <div className="app__view-btns">
@@ -427,14 +528,25 @@ export default function App() {
               type="button"
               className={`app__orbit-btn ${interiorView ? 'app__orbit-btn--on' : ''}`}
               aria-pressed={interiorView}
-              title={interiorView ? 'Exit interior panorama' : 'Interior panorama — look around inside the stone'}
+              title={
+                interiorView
+                  ? systemBodies.length > 0
+                    ? 'Back to stellar system'
+                    : 'Exit interior panorama'
+                  : canViewSystemSurface
+                    ? `Interior of ${selectedBody?.label ?? 'selected planet'}`
+                    : 'Interior panorama — look around inside the stone'
+              }
               onClick={() => {
                 if (interiorView) {
                   setInteriorView(false)
+                  setSurfaceMemory(null)
+                  if (systemBodies.length > 0) setOrbitSystem(true)
                   return
                 }
                 setOrbitSystem(false)
                 setSurfaceView(false)
+                setSurfaceMemory(null)
                 setInteriorView(true)
               }}
             >
@@ -474,11 +586,13 @@ export default function App() {
               onClick={() => {
                 if (surfaceView) {
                   setSurfaceView(false)
+                  setSurfaceMemory(null)
                   if (systemBodies.length > 0) setOrbitSystem(true)
                   return
                 }
                 setInteriorView(false)
                 setOrbitSystem(false)
+                setSurfaceMemory(null)
                 setSurfaceView(true)
               }}
             >
@@ -566,6 +680,8 @@ export default function App() {
         <Controls
           draftDigits={draftDigits}
           onDraftDigitsChange={setDraftDigits}
+          draftMemoryNote={draftMemoryNote}
+          onDraftMemoryNoteChange={setDraftMemoryNote}
           appliedDigits={appliedDigits}
           seed={seed}
           noiseStrength={noiseStrength}
@@ -610,16 +726,26 @@ export default function App() {
           onSettingsChange={handleOrbitSettings}
           bodies={systemBodies}
           selectedId={selectedBodyId}
-          onSelectBody={setSelectedBodyId}
+          onSelectBody={(id) => {
+            if (collideSelectMoverId && id !== collideSelectMoverId) {
+              handleConfirmCollideTarget(id)
+              return
+            }
+            setSelectedBodyId(id)
+          }}
           onOrbitChange={handlePlanetOrbit}
-          onApplyEncounter={handleApplyEncounter}
-          encounterPreview={encounterPreview}
-          onEncounterPreviewChange={handleEncounterPreviewChange}
+          collideSelectMoverId={collideSelectMoverId}
+          onStartCollideSelect={handleStartCollideSelect}
+          onCancelCollideSelect={handleCancelCollideSelect}
+          onConfirmCollideTarget={handleConfirmCollideTarget}
           historyEntries={history}
           onClearSystem={() => {
+            canvasRef.current?.cancelAccretion()
+            setCollideSelectMoverId(null)
+            setApproachPair(null)
             setSystemBodies([])
-            setEncounterPreview(null)
           }}
+          onRemoveBody={handleRemoveBody}
         />
       ) : null}
     </div>

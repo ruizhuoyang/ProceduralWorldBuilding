@@ -58,6 +58,8 @@ function scarsToStone(scars: PlanetScar[]): StoneScarParams[] {
     localPoint: s.localPoint,
     color: s.color,
     radius: s.radius ?? defaultScarRadius(),
+    imprintProfile: s.imprintProfile,
+    imprintSeed: s.imprintSeed,
   }))
 }
 
@@ -89,6 +91,11 @@ export function startAccretionAnim(
       localPoint: collision.localPoint,
       direction: collision.direction,
       radius: defaultScarRadius(survivorBody.planet.scars.length),
+      kind: 'impact',
+      digits: absorbedBody.planet.digits,
+      memoryNote: '',
+      imprintProfile: absorbedBody.planet.scars.find((s) => s.kind === 'impact')?.imprintProfile,
+      imprintSeed: absorbedBody.planet.seed,
     } satisfies PlanetScar)
   const scarFinalRadius = newScar.radius ?? defaultScarRadius(survivorBody.planet.scars.length)
   const survivorScarBase = scarsToStone(survivorBody.planet.scars)
@@ -101,13 +108,19 @@ export function startAccretionAnim(
     radiusMin: survivorBuilt.radiusMin,
     radiusMax: survivorBuilt.radiusMax,
   }
-  // Contact frame: keep the survivor look; the new stain starts tiny at the impact.
+  // Contact frame: keep the survivor look; the new imprint starts tiny at the impact.
   applyStoneNoiseParams(survivor.material, {
     ...survivorLook,
     noiseScale: 2.4,
     scars: [
       ...survivorScarBase,
-      { localPoint: newScar.localPoint, color: newScar.color, radius: 0.02 },
+      {
+        localPoint: newScar.localPoint,
+        color: newScar.color,
+        radius: 0.02,
+        imprintProfile: newScar.imprintProfile,
+        imprintSeed: newScar.imprintSeed,
+      },
     ],
   })
   survivorBuilt.geometry.dispose()
@@ -299,7 +312,7 @@ export function tickAccretionAnim(
   pos.needsUpdate = true
   ;(anim.debris.material as THREE.PointsMaterial).opacity = t < 0.75 ? 0.85 : 0.85 * (1 - (t - 0.75) / 0.25)
 
-  // Grow the absorbed color out from the contact site along the rock grain.
+  // Grow the fossil imprint out from the contact site.
   const stain = easeInOut(Math.min(1, Math.max(0, (t - 0.08) / 0.72)))
   applyStoneNoiseParams(anim.survivorMat, {
     ...anim.survivorLook,
@@ -310,6 +323,8 @@ export function tickAccretionAnim(
         localPoint: anim.newScar.localPoint,
         color: anim.newScar.color,
         radius: Math.max(0.02, anim.scarFinalRadius * stain),
+        imprintProfile: anim.newScar.imprintProfile,
+        imprintSeed: anim.newScar.imprintSeed,
       },
     ],
   })

@@ -73,4 +73,29 @@
   white-space: nowrap;
   user-select: none;
   pointer-events: none;
+  transition:
+    border-color 0.14s ease,
+    background 0.14s ease,
+    box-shadow 0.14s ease,
+    color 0.14s ease;
+}
+
+.fossil-planet-label--pickable {
+  border-color: #c49a5a;
+  background: rgba(212, 168, 92, 0.28);
+  box-shadow: 0 0 0 1px rgba(196, 154, 90, 0.45);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.fossil-planet-label--chase-mover {
+  border-color: #c49a5a;
+  background: rgba(196, 154, 90, 0.92);
+  color: #2a2418;
+}
+
+.fossil-planet-label--chase-target {
+  border-color: #8a867f;
+  background: rgba(236, 235, 232, 0.96);
+  box-shadow: 0 0 0 1px rgba(42, 36, 24, 0.18);
 }

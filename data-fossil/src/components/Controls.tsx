@@ -45,6 +45,8 @@ import './Controls.css'
 export type ControlsProps = {
   draftDigits: string
   onDraftDigitsChange: (value: string) => void
+  draftMemoryNote: string
+  onDraftMemoryNoteChange: (value: string) => void
   appliedDigits: string
   seed: number
   noiseStrength: number
@@ -102,6 +104,8 @@ function nextDistinctColor(existing: string[]): string {
 export default function Controls({
   draftDigits,
   onDraftDigitsChange,
+  draftMemoryNote,
+  onDraftMemoryNoteChange,
   appliedDigits,
   seed,
   noiseStrength,
@@ -225,6 +229,18 @@ export default function Controls({
             Generate
           </button>
         </div>
+        <FieldLabel htmlFor="memory-note-input" tip="Saved with this fossil. Leave blank if you want.">
+          Memory note · Optional
+        </FieldLabel>
+        <textarea
+          id="memory-note-input"
+          className="controls__textarea"
+          rows={3}
+          maxLength={280}
+          placeholder="What does this number remind you of?"
+          value={draftMemoryNote}
+          onChange={(e) => onDraftMemoryNoteChange(e.target.value.slice(0, 280))}
+        />
       </section>
 
       <section className="controls__block">

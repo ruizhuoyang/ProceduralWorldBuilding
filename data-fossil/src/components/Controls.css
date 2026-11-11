@@ -237,6 +237,27 @@
 .layer-card__actions {
   display: flex;
   flex-shrink: 0;
+  align-items: center;
+}
+
+.layer-card__remove {
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  font-family: 'IBM Plex Mono', Consolas, monospace;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.layer-card__remove:hover {
+  color: var(--accent-ink);
+  background: rgba(196, 154, 90, 0.14);
 }
 
 .layer-card__actions button {
@@ -468,6 +489,31 @@
   border-color: var(--accent);
 }
 
+.controls__textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  resize: vertical;
+  min-height: 4.2rem;
+}
+
+.controls__textarea:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.controls__textarea::placeholder {
+  color: var(--text-faint);
+}
+
 .field-select {
   position: relative;
 }
@@ -594,6 +640,26 @@
   font-size: 0.72rem;
   line-height: 1.45;
   color: var(--text-muted);
+}
+
+.controls__hint--accent {
+  color: var(--accent-ink);
+  font-weight: 500;
+}
+
+.controls__collide {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.layer-card--collide-mover {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.layer-card--collide-target .layer-card__name {
+  color: var(--accent-ink);
 }
 
 .controls__modes {

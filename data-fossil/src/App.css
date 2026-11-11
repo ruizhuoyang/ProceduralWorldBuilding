@@ -49,8 +49,34 @@
   top: 1.35rem;
   left: 1.5rem;
   z-index: 2;
-  max-width: min(28rem, 55%);
+  max-width: min(22rem, 48%);
   pointer-events: none;
+}
+
+.app__brand .app__home-link {
+  pointer-events: auto;
+}
+
+.app__home-link {
+  display: inline-block;
+  margin-top: 0.45rem;
+  padding: 0;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.16em;
+}
+
+.app__home-link:hover {
+  color: var(--text);
+  text-decoration-color: var(--border);
 }
 
 .app__chrome-right {
@@ -98,6 +124,57 @@
 .app__mode-btn--active {
   color: var(--accent-ink);
   background: var(--accent);
+}
+
+.app__memory-card {
+  position: absolute;
+  left: 1.35rem;
+  bottom: 1.35rem;
+  z-index: 7;
+  width: min(17rem, calc(100% - 6.5rem));
+  padding: 0.85rem 1rem 0.95rem;
+  background: rgba(236, 235, 232, 0.94);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+
+.app__memory-card-close {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.4rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  font: inherit;
+  font-size: 1.05rem;
+  line-height: 1;
+  color: var(--text-faint);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.app__memory-card-close:hover {
+  color: var(--text);
+}
+
+.app__memory-card-digits {
+  margin: 0;
+  padding-right: 1.2rem;
+  font-family: 'IBM Plex Mono', Consolas, monospace;
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.app__memory-card-note {
+  margin: 0.45rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  white-space: pre-wrap;
 }
 
 .app__view-btns {
@@ -154,21 +231,6 @@
   color: var(--text);
 }
 
-.app__tagline {
-  margin: 0.55rem 0 0;
-  font-size: 0.8125rem;
-  font-weight: 400;
-  line-height: 1.45;
-  letter-spacing: 0.01em;
-  color: var(--text-muted);
-}
-
-.app__tagline em {
-  font-style: normal;
-  color: var(--accent);
-  font-weight: 500;
-}
-
 @media (max-width: 800px) {
   .app--edit,
   .app--orbit {
@@ -189,7 +251,7 @@
   .app__brand {
     top: 1rem;
     left: 1rem;
-    max-width: min(22rem, 50%);
+    max-width: min(14rem, 42%);
   }
 
   .controls {

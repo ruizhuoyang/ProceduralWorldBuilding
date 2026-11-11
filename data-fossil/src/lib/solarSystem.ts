@@ -97,6 +97,72 @@ function placePlanet(planet: PlanetBody) {
   planet.holder.position.set(Math.cos(planet.phase) * r, 0, Math.sin(planet.phase) * r)
 }
 
+export type PlanetLabelHints = {
+  pickMoverId: string | null
+  approach: { moverId: string; targetId: string } | null
+}
+
+function planetLabelEl(planet: PlanetBody): HTMLElement | null {
+  const label = planet.holder.children.find((child) => child instanceof CSS2DObject) as
+    | CSS2DObject
+    | undefined
+  return label?.element ?? null
+}
+
+/** Highlight chase / pickable labels — no Meet markers in the scene. */
+export function syncPlanetLabelHints(
+  system: SolarSystem | null | undefined,
+  hints: PlanetLabelHints,
+  onPickTarget?: (targetId: string) => void,
+) {
+  if (!system) return
+  const approach = hints.approach
+  const targetPlanet = approach
+    ? system.planets.find((p) => p.id === approach.targetId)
+    : undefined
+  const targetLabel = targetPlanet ? planetLabelEl(targetPlanet)?.dataset.baseLabel : undefined
+
+  for (const planet of system.planets) {
+    const el = planetLabelEl(planet)
+    if (!el) continue
+    const base = el.dataset.baseLabel || el.textContent || planet.id
+    el.dataset.baseLabel = base.replace(/\s*→.*$/, '').trim() || planet.id
+
+    el.classList.remove(
+      'fossil-planet-label--pickable',
+      'fossil-planet-label--chase-mover',
+      'fossil-planet-label--chase-target',
+    )
+    el.style.pointerEvents = ''
+    el.style.cursor = ''
+    el.onclick = null
+
+    if (hints.pickMoverId && planet.id !== hints.pickMoverId) {
+      el.classList.add('fossil-planet-label--pickable')
+      el.textContent = el.dataset.baseLabel
+      el.style.pointerEvents = 'auto'
+      el.style.cursor = 'pointer'
+      el.onclick = (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onPickTarget?.(planet.id)
+      }
+      continue
+    }
+    if (approach?.moverId === planet.id) {
+      el.classList.add('fossil-planet-label--chase-mover')
+      el.textContent = `${el.dataset.baseLabel} → ${targetLabel || 'target'}`
+      continue
+    }
+    if (approach?.targetId === planet.id) {
+      el.classList.add('fossil-planet-label--chase-target')
+      el.textContent = el.dataset.baseLabel
+      continue
+    }
+    el.textContent = el.dataset.baseLabel
+  }
+}
+
 export function syncSolarOrbits(
   system: SolarSystem,
   bodies: SystemBody[],
@@ -179,6 +245,7 @@ function addPlanetBody(
   const labelEl = document.createElement('div')
   labelEl.className = 'fossil-planet-label'
   labelEl.textContent = body.label
+  labelEl.dataset.baseLabel = body.label
   const label = new CSS2DObject(labelEl)
   holder.add(label)
 

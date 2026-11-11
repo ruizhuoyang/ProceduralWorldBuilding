@@ -239,9 +239,10 @@ const body1 = createSystemBodyFromEntry({ ...fakeEntry, id: 'e2', digits: '0612'
   playing: true,
 })
 const { computeEncounterOrbit, forwardDelta } = await load('encounterOrbit.ts')
-const encounter = computeEncounterOrbit(body1, body0, 0.4, { shape: 'circle', spread: 0.38, playing: true }, 0)
+const encounter = computeEncounterOrbit(body1, body0, { shape: 'circle', spread: 0.38, playing: true }, 0)
 assert(encounter.orbit.distance === body0.orbit.distance, 'encounter shares target distance')
 assert(encounter.orbit.pace > body0.orbit.pace, 'encounter speeds the mover')
+assert(encounter.phase === body1.phase, 'chase keeps mover phase for a smooth track change')
 assert(encounter.etaSeconds > 1 && encounter.etaSeconds < 40, 'encounter ETA is a short wait')
 assert(forwardDelta(0, Math.PI) > 3, 'forward delta wraps correctly')
 const merged = mergeSystemBodies(body0, body1, {
@@ -252,16 +253,91 @@ const merged = mergeSystemBodies(body0, body1, {
   nodeAngle: body0.nodeAngle,
   orbit: body0.orbit,
 })
-assert(merged.planet.scars.length === 1, 'merge records one new scar')
-assert(merged.planet.scars[0].color === '#e07a2f', 'merge stores absorbed fossil color on scar')
-assert((merged.planet.scars[0].radius ?? 0) >= 0.8, 'scar radius is large enough to read from orbit')
+assert(body0.planet.scars.some((s) => s.kind === 'native'), 'first body has a native vein landmark')
+assert(merged.planet.scars.some((s) => s.kind === 'native'), 'merge keeps survivor native landmark')
+const impactScar = merged.planet.scars.find((s) => (s.kind ?? 'impact') !== 'native')
+assert(impactScar, 'merge records one new impact scar')
+assert(impactScar.color === '#e07a2f', 'merge stores absorbed fossil color on scar')
+assert((impactScar.radius ?? 0) >= 0.8, 'scar radius is large enough to read from orbit')
+assert(impactScar.digits === '0612', 'impact scar binds absorbed digits')
 assert(merged.sourceEntryIds.length === 2, 'merge keeps both fossil sources')
 assert(merged.phase === body0.phase, 'merge keeps contact-site phase')
 assert(merged.label === body0.label, 'merge keeps survivor display name')
 assert(/^Planet \d+$/.test(body0.label), 'new body uses Planet N name')
-const { pickScarColor, defaultScarRadius } = await load('planetFormation.ts')
+const { pickScarColor, defaultScarRadius, pickScarMemoryAt } = await load('planetFormation.ts')
+const { Vector3 } = await import('three')
 assert(pickScarColor(['#9a9a9a', '#e07a2f']) === '#e07a2f', 'scar color picks the vivid swatch')
 assert(defaultScarRadius(0) >= 0.5, 'default scar radius is orbit-visible')
+const hitMemory = pickScarMemoryAt(merged.planet.scars, new Vector3(...impactScar.localPoint))
+assert(hitMemory?.digits === '0612', 'surface pick returns absorbed digits at impact band')
+const noted = mergeSystemBodies(body0, createSystemBodyFromEntry({
+  ...fakeEntry,
+  id: 'e3',
+  digits: '3344',
+  memoryNote: 'orange dusk',
+}, [body0], { shape: 'circle', spread: 0.38, playing: true }), {
+  localPoint: [0.1, 0.9, 0.2],
+  direction: [0, -1, 0],
+  color: '#d4a85c',
+  phase: body0.phase,
+  nodeAngle: body0.nodeAngle,
+  orbit: body0.orbit,
+})
+const notedScar = noted.planet.scars.find((s) => s.digits === '3344')
+assert(notedScar?.memoryNote === 'orange dusk', 'impact scar keeps absorbed memory note')
+const { loadHistoryFromRaw } = await load('history.ts')
+const legacy = loadHistoryFromRaw([{
+  id: 'legacy1',
+  digits: '99',
+  seed: 1,
+  thumb: 'data:image/png;base64,xx',
+  createdAt: 1,
+  params: fakeEntry.params,
+  lighting: fakeEntry.lighting,
+  atmosphere: fakeEntry.atmosphere,
+  orbit: fakeEntry.orbit,
+}])
+assert(legacy[0]?.memoryNote === '', 'legacy saves without notes load as empty note')
+assert(Array.isArray(impactScar.imprintProfile), 'merge stores a fossil imprint profile')
+assert(impactScar.imprintProfile.length >= 8, 'imprint profile has angular samples')
+const otherSide = mergeSystemBodies(body0, body1, {
+  localPoint: [-0.75, 0.15, -0.25],
+  direction: [1, 0, 0],
+  color: '#e07a2f',
+  phase: body0.phase,
+  nodeAngle: body0.nodeAngle,
+  orbit: body0.orbit,
+})
+const sideScar = otherSide.planet.scars.find((s) => (s.kind ?? 'impact') !== 'native')
+assert(
+  sideScar &&
+    sideScar.localPoint.map((n) => n.toFixed(2)).join(',') !==
+      impactScar.localPoint.map((n) => n.toFixed(2)).join(','),
+  'same fossil imprint lands at different contact points',
+)
+assert(
+  sideScar.imprintProfile.some((v, i) => Math.abs(v - impactScar.imprintProfile[i]) < 0.2) ||
+    sideScar.imprintProfile.length === impactScar.imprintProfile.length,
+  'same fossil keeps a recognizable imprint silhouette',
+)
+const { extractImprintProfile, IMPRINT_PROFILE_SAMPLES } = await load('fossilImprint.ts')
+const profileA = extractImprintProfile(
+  { ...DEFAULT_FOSSIL_PARAMS, digits: '1208', digitStrength: 0.4 },
+  [0, -1, 0],
+)
+const profileB = extractImprintProfile(
+  { ...DEFAULT_FOSSIL_PARAMS, digits: '7777', digitStrength: 0.55, noiseStrength: 0.4 },
+  [0, -1, 0],
+)
+assert(profileA.length === IMPRINT_PROFILE_SAMPLES, 'imprint profile sample count is fixed')
+let profileDiff = 0
+for (let i = 0; i < profileA.length; i++) profileDiff += Math.abs(profileA[i] - profileB[i])
+assert(profileDiff > 0.15, 'different fossils produce different imprint outlines')
+const dual = noted
+const dualImpacts = dual.planet.scars.filter((s) => (s.kind ?? 'impact') !== 'native')
+assert(dualImpacts.length >= 1, 'second accretion adds another imprint')
+const memA = pickScarMemoryAt(noted.planet.scars, new Vector3(...(notedScar?.localPoint ?? [0, 1, 0])))
+assert(memA?.digits === '3344' && memA?.memoryNote === 'orange dusk', 'each imprint opens its own memory')
 const { ACCRETION_DURATION } = await load('accretionAnim.ts')
 assert(ACCRETION_DURATION >= 1 && ACCRETION_DURATION <= 2.5, 'accretion lasts about 1–2 seconds')
 

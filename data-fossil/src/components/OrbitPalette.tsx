@@ -1,14 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import {
-  computeEncounterOrbit,
-  formatEta,
-} from '../lib/encounterOrbit'
+import { useMemo } from 'react'
 import type { FossilHistoryEntry } from '../lib/history'
 import {
   ORBIT_DISTANCE_MAX,
   ORBIT_DISTANCE_MIN,
-  ORBIT_ECC_MAX,
-  ORBIT_ECC_MIN,
   ORBIT_SHAPES,
   ORBIT_PACE_MAX,
   ORBIT_PACE_MIN,
@@ -26,11 +20,6 @@ import type { SystemBody } from '../lib/systemBodies'
 import { FieldLabel, PaletteSelect, PaletteShell, SwitchRow } from './paletteUi'
 import './Controls.css'
 
-export type EncounterPreviewState = {
-  targetId: string
-  meetPhase: number
-} | null
-
 type OrbitPaletteProps = {
   settings: OrbitSystemSettings
   onSettingsChange: (patch: Partial<OrbitSystemSettings>) => void
@@ -38,14 +27,14 @@ type OrbitPaletteProps = {
   selectedId: string | null
   onSelectBody: (id: string) => void
   onOrbitChange: (id: string, patch: Partial<PlanetOrbit>) => void
-  onApplyEncounter: (
-    moverId: string,
-    patch: { orbit: PlanetOrbit; phase: number; nodeAngle: number },
-  ) => void
-  encounterPreview: EncounterPreviewState
-  onEncounterPreviewChange: (preview: EncounterPreviewState) => void
+  /** Body currently choosing a collide target, or null. */
+  collideSelectMoverId: string | null
+  onStartCollideSelect: (moverId: string) => void
+  onCancelCollideSelect: () => void
+  onConfirmCollideTarget: (targetId: string) => void
   historyEntries: FossilHistoryEntry[]
   onClearSystem: () => void
+  onRemoveBody: (id: string) => void
 }
 
 export default function OrbitPalette({
@@ -55,45 +44,15 @@ export default function OrbitPalette({
   selectedId,
   onSelectBody,
   onOrbitChange,
-  onApplyEncounter,
-  onEncounterPreviewChange,
+  collideSelectMoverId,
+  onStartCollideSelect,
+  onCancelCollideSelect,
+  onConfirmCollideTarget,
   historyEntries,
   onClearSystem,
+  onRemoveBody,
 }: OrbitPaletteProps) {
-  const selected = bodies.find((b) => b.id === selectedId) ?? null
-  const others = useMemo(
-    () => bodies.filter((b) => b.id !== selected?.id),
-    [bodies, selected?.id],
-  )
-
-  const [targetId, setTargetId] = useState<string>('')
-  const [meetAngle01, setMeetAngle01] = useState(0.42)
-
-  useEffect(() => {
-    if (others.length === 0) {
-      setTargetId('')
-      return
-    }
-    if (!others.some((b) => b.id === targetId)) {
-      setTargetId(others[0]!.id)
-    }
-  }, [others, targetId])
-
-  const target = others.find((b) => b.id === targetId) ?? null
-  const targetIndex = target ? bodies.findIndex((b) => b.id === target.id) : 0
-
-  const plan = useMemo(() => {
-    if (!selected || !target) return null
-    return computeEncounterOrbit(selected, target, meetAngle01, settings, Math.max(0, targetIndex))
-  }, [selected, target, meetAngle01, settings, targetIndex])
-
-  useEffect(() => {
-    if (!selected || !plan || !target) {
-      onEncounterPreviewChange(null)
-      return
-    }
-    onEncounterPreviewChange({ targetId: target.id, meetPhase: plan.meetPhase })
-  }, [selected, plan, target, onEncounterPreviewChange])
+  const canCollide = bodies.length >= 2
 
   const sourceLabels = (body: SystemBody) =>
     body.sourceEntryIds.map((id) => {
@@ -101,13 +60,19 @@ export default function OrbitPalette({
       return entry?.digits ?? id.slice(0, 6)
     })
 
+  const picking = collideSelectMoverId !== null
+  const pickMoverLabel = useMemo(() => {
+    if (!collideSelectMoverId) return ''
+    return bodies.find((b) => b.id === collideSelectMoverId)?.label ?? 'body'
+  }, [bodies, collideSelectMoverId])
+
   return (
     <PaletteShell label="Orbit">
       <section className="controls__block">
         <span className="controls__label">Cosmos</span>
         <p className="controls__hint">
-          One fossil can orbit alone. Add more from the tray on separate tracks. Use Encounter Orbit
-          on a selected body to aim a meeting — merge only when the surfaces actually touch.
+          One fossil can orbit alone. Add more from the tray on separate tracks. Select a body, then
+          Collide with… and click another fossil in the scene to send it on a chase.
         </p>
         <button
           type="button"
@@ -159,8 +124,15 @@ export default function OrbitPalette({
 
       <section className="controls__block">
         <span className="controls__label">Bodies</span>
+        {picking ? (
+          <p className="controls__hint controls__hint--accent" role="status">
+            Select another fossil for {pickMoverLabel}. Esc or Cancel to quit.
+          </p>
+        ) : null}
         {bodies.length === 0 ? (
-          <p className="controls__hint">Empty system — pick a saved fossil in the tray to place the first planet.</p>
+          <p className="controls__hint">
+            Empty system — pick a saved fossil in the tray to place the first planet.
+          </p>
         ) : (
           <div className="layer-list">
             {bodies.map((body, index) => {
@@ -168,20 +140,44 @@ export default function OrbitPalette({
               const distance = resolveOrbitDistance(body.orbit, index, settings.spread)
               const scars = body.planet.scars.length
               const sources = sourceLabels(body)
+              const isPickMover = collideSelectMoverId === body.id
+              const isPickTarget =
+                picking && collideSelectMoverId !== null && collideSelectMoverId !== body.id
               return (
                 <div
                   key={body.id}
-                  className={`layer-card ${expanded ? 'layer-card--expanded' : ''}`}
+                  className={`layer-card ${expanded ? 'layer-card--expanded' : ''}${
+                    isPickMover ? ' layer-card--collide-mover' : ''
+                  }${isPickTarget ? ' layer-card--collide-target' : ''}`}
                 >
                   <div className="layer-card__header">
                     <button
                       type="button"
                       className="layer-card__name"
-                      onClick={() => onSelectBody(body.id)}
+                      onClick={() => {
+                        if (picking && collideSelectMoverId && body.id !== collideSelectMoverId) {
+                          onConfirmCollideTarget(body.id)
+                          return
+                        }
+                        onSelectBody(body.id)
+                      }}
                     >
                       {body.label}
                     </button>
-                    <span className="layer-card__type">{index + 1}</span>
+                    <div className="layer-card__actions">
+                      <button
+                        type="button"
+                        className="layer-card__remove"
+                        title="Remove from System"
+                        aria-label="Remove from System"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onRemoveBody(body.id)
+                        }}
+                      >
+                        −
+                      </button>
+                    </div>
                   </div>
                   {expanded ? (
                     <div className="layer-card__body">
@@ -215,38 +211,15 @@ export default function OrbitPalette({
                         type="range"
                         min={ORBIT_DISTANCE_MIN}
                         max={ORBIT_DISTANCE_MAX}
-                        step={0.05}
+                        step={0.02}
                         value={distance}
                         onChange={(e) =>
                           onOrbitChange(body.id, { distance: Number(e.target.value) })
                         }
                       />
-                      {settings.shape === 'ellipse' ? (
-                        <>
-                          <FieldLabel
-                            htmlFor={`orbit-ecc-${body.id}`}
-                            tip="How stretched the ellipse is. Star sits at one focus."
-                            value={body.orbit.eccentricity.toFixed(2)}
-                          >
-                            Stretch
-                          </FieldLabel>
-                          <input
-                            id={`orbit-ecc-${body.id}`}
-                            className="controls__slider"
-                            type="range"
-                            min={ORBIT_ECC_MIN}
-                            max={ORBIT_ECC_MAX}
-                            step={0.02}
-                            value={body.orbit.eccentricity}
-                            onChange={(e) =>
-                              onOrbitChange(body.id, { eccentricity: Number(e.target.value) })
-                            }
-                          />
-                        </>
-                      ) : null}
                       <FieldLabel
                         htmlFor={`orbit-tilt-${body.id}`}
-                        tip="Orbit plane lean. 0 is flat; ±1 is nearly edge-on the other way (~±85°)."
+                        tip="Orbit plane tilt."
                         value={body.orbit.tilt.toFixed(2)}
                       >
                         Tilt
@@ -257,7 +230,7 @@ export default function OrbitPalette({
                         type="range"
                         min={ORBIT_TILT_MIN}
                         max={ORBIT_TILT_MAX}
-                        step={0.02}
+                        step={0.01}
                         value={body.orbit.tilt}
                         onChange={(e) => onOrbitChange(body.id, { tilt: Number(e.target.value) })}
                       />
@@ -281,64 +254,38 @@ export default function OrbitPalette({
 
                       {scars > 0 || sources.length > 1 ? (
                         <p className="controls__hint">
-                          Surface record: {scars} impact{scars === 1 ? '' : 's'}
+                          Surface record: {scars} mark{scars === 1 ? '' : 's'}
                           {sources.length > 0 ? ` · fossils ${sources.join(', ')}` : ''}
-                          . Open View Surface to walk the contact marks.
+                          . Open View Surface to find Fossil Imprints — each stamp keeps that
+                          fossil&apos;s outline, digits, and memory note.
                         </p>
                       ) : null}
 
-                      {others.length > 0 && plan && target ? (
-                        <>
-                          <span className="controls__label" style={{ marginTop: '0.35rem' }}>
-                            Encounter Orbit
-                          </span>
-                          <p className="controls__hint">
-                            Aim this body at another planet. The marker shows the planned meeting
-                            spot; merge waits for real contact.
-                          </p>
-                          <FieldLabel htmlFor={`encounter-target-${body.id}`} tip="Body to meet.">
-                            Target
-                          </FieldLabel>
-                          <PaletteSelect
-                            id={`encounter-target-${body.id}`}
-                            value={target.id}
-                            options={others.map((o) => ({ value: o.id, label: o.label }))}
-                            onChange={(id) => setTargetId(id)}
-                          />
-                          <FieldLabel
-                            htmlFor={`encounter-meet-${body.id}`}
-                            tip="Where along the target track they should meet."
-                            value={`${Math.round(meetAngle01 * 360)}°`}
-                          >
-                            Meet
-                          </FieldLabel>
-                          <input
-                            id={`encounter-meet-${body.id}`}
-                            className="controls__slider"
-                            type="range"
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            value={meetAngle01}
-                            onChange={(e) => setMeetAngle01(Number(e.target.value))}
-                          />
-                          <p className="controls__hint">
-                            Preview ETA {formatEta(plan.etaSeconds)} · shared track, faster pace
-                          </p>
-                          <button
-                            type="button"
-                            className="controls__btn controls__btn--primary"
-                            onClick={() =>
-                              onApplyEncounter(body.id, {
-                                orbit: plan.orbit,
-                                phase: plan.phase,
-                                nodeAngle: plan.nodeAngle,
-                              })
-                            }
-                          >
-                            Apply Encounter Orbit
-                          </button>
-                        </>
+                      {canCollide ? (
+                        <div className="controls__collide">
+                          {picking && isPickMover ? (
+                            <>
+                              <p className="controls__hint controls__hint--accent" role="status">
+                                Select another fossil
+                              </p>
+                              <button
+                                type="button"
+                                className="controls__btn"
+                                onClick={onCancelCollideSelect}
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : !picking ? (
+                            <button
+                              type="button"
+                              className="controls__btn controls__btn--primary"
+                              onClick={() => onStartCollideSelect(body.id)}
+                            >
+                              Collide with…
+                            </button>
+                          ) : null}
+                        </div>
                       ) : null}
                     </div>
                   ) : null}

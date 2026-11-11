@@ -19,6 +19,8 @@ export const HISTORY_MAX = 12
 export type FossilHistoryEntry = {
   id: string
   digits: string
+  /** Optional short memory tied to this fossil; legacy saves omit it. */
+  memoryNote: string
   seed: number
   thumb: string
   createdAt: number
@@ -38,6 +40,11 @@ export type FossilHistoryEntry = {
   lighting: LightingParams
   atmosphere: AtmosphereParams
   orbit: PlanetOrbit
+}
+
+export function normalizeMemoryNote(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  return raw.replace(/\r\n/g, '\n').slice(0, 280)
 }
 
 function migrateColors(paramsRaw: Record<string, unknown>): string[] {
@@ -72,6 +79,7 @@ function normalizeEntry(raw: Record<string, unknown>): FossilHistoryEntry | null
   return {
     id,
     digits,
+    memoryNote: normalizeMemoryNote(raw.memoryNote),
     seed: typeof raw.seed === 'number' ? raw.seed : 0,
     thumb,
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),

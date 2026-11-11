@@ -1,13 +1,21 @@
 import * as THREE from 'three'
+import {
+  IMPRINT_PROFILE_SAMPLES,
+  defaultCircularProfile,
+  normalizeImprintProfile,
+} from './fossilImprint'
 import { PLANET_SCAR_MAX } from './planetFormation'
 import { STONE_COLOR_MAX, normalizeColorAlts, normalizeStoneColors } from './types'
 
-const CACHE_KEY = 'data-fossil-stone-noise-v12'
+const CACHE_KEY = 'data-fossil-stone-noise-v13-imprint'
+const PROFILE_FLOATS = PLANET_SCAR_MAX * IMPRINT_PROFILE_SAMPLES
 
 export type StoneScarParams = {
   localPoint: [number, number, number]
   color: string
   radius?: number
+  imprintProfile?: number[]
+  imprintSeed?: number
 }
 
 export type StoneNoiseParams = {
@@ -35,6 +43,8 @@ type StoneUniforms = {
   uScarPos: { value: THREE.Vector3[] }
   uScarColor: { value: THREE.Vector3[] }
   uScarRadius: { value: number[] }
+  uScarSeed: { value: number[] }
+  uScarProfile: { value: Float32Array }
   uScarCount: { value: number }
 }
 
@@ -89,6 +99,8 @@ export function enableStoneNoiseMaterial(material: THREE.MeshStandardMaterial): 
       value: Array.from({ length: PLANET_SCAR_MAX }, () => new THREE.Vector3(0.69, 0.667, 0.635)),
     },
     uScarRadius: { value: Array.from({ length: PLANET_SCAR_MAX }, () => 0.75) },
+    uScarSeed: { value: Array.from({ length: PLANET_SCAR_MAX }, () => 1) },
+    uScarProfile: { value: new Float32Array(PROFILE_FLOATS).fill(1) },
     uScarCount: { value: 0 },
   }
   material.userData.stoneUniforms = uniforms
@@ -110,6 +122,8 @@ export function enableStoneNoiseMaterial(material: THREE.MeshStandardMaterial): 
     shader.uniforms.uScarPos = uniforms.uScarPos
     shader.uniforms.uScarColor = uniforms.uScarColor
     shader.uniforms.uScarRadius = uniforms.uScarRadius
+    shader.uniforms.uScarSeed = uniforms.uScarSeed
+    shader.uniforms.uScarProfile = uniforms.uScarProfile
     shader.uniforms.uScarCount = uniforms.uScarCount
 
     shader.vertexShader = shader.vertexShader
@@ -155,8 +169,19 @@ export function enableStoneNoiseMaterial(material: THREE.MeshStandardMaterial): 
         uniform vec3 uScarPos[${PLANET_SCAR_MAX}];
         uniform vec3 uScarColor[${PLANET_SCAR_MAX}];
         uniform float uScarRadius[${PLANET_SCAR_MAX}];
+        uniform float uScarSeed[${PLANET_SCAR_MAX}];
+        uniform float uScarProfile[${PROFILE_FLOATS}];
         uniform int uScarCount;
         uniform mat3 normalMatrix;
+
+        float sampleScarProfile(int si, float theta) {
+          float t = fract(theta / 6.28318530718 + 0.5) * float(${IMPRINT_PROFILE_SAMPLES});
+          int i0 = int(floor(t));
+          int i1 = (i0 + 1) >= ${IMPRINT_PROFILE_SAMPLES} ? 0 : i0 + 1;
+          float f = fract(t);
+          int base = si * ${IMPRINT_PROFILE_SAMPLES};
+          return mix(uScarProfile[base + i0], uScarProfile[base + i1], f);
+        }
 
         vec3 seedOff() {
           return vec3(
@@ -288,28 +313,36 @@ export function enableStoneNoiseMaterial(material: THREE.MeshStandardMaterial): 
 
           roughnessOut = clamp(0.72 + n1 * 0.14 - dustMask * 0.1, 0.2, 1.0);
 
-          // Impact stains: irregular rock bands in the incoming fossil color.
-          // Warp the angular edge so the patch looks like accreted stone, not a disc.
+          // Fossil Imprints: silhouette stamps in the incoming fossil color / grain.
           vec3 npos = normalize(pos);
           for (int si = 0; si < ${PLANET_SCAR_MAX}; si++) {
             if (si >= uScarCount) break;
             vec3 scarN = normalize(uScarPos[si]);
             float ang = acos(clamp(dot(npos, scarN), -1.0, 1.0));
             float rad = max(uScarRadius[si], 0.35);
-            float edgeNoise = fbm3(pos * uNoiseScale * 2.2 + seedOff() + float(si) * 7.3);
-            float warp = (edgeNoise - 0.5) * rad * 0.7;
+            // Tangent frame matches CPU scarTangentBasis.
+            vec3 scarT = normalize(cross(vec3(0.0, 1.0, 0.0), scarN));
+            if (length(scarT) < 0.2) scarT = normalize(cross(vec3(1.0, 0.0, 0.0), scarN));
+            vec3 scarB = cross(scarN, scarT);
+            float theta = atan(dot(npos, scarB), dot(npos, scarT));
+            float prof = sampleScarProfile(si, theta);
+            float edge = rad * mix(0.42, 1.0, prof);
+            // Soft outline following the fossil contour (readable from orbit + surface).
+            float edgeNoise = fbm3(pos * uNoiseScale * 2.4 + seedOff() + float(si) * 7.3 + uScarSeed[si] * 0.001);
+            float warp = (edgeNoise - 0.5) * edge * 0.18;
             float angW = max(0.0, ang + warp);
-            // Wide soft halo + dense core so the hue reads at stellar camera distance.
-            float halo = 1.0 - smoothstep(rad * 0.2, rad * 1.25, angW);
-            float core = 1.0 - smoothstep(rad * 0.05, rad * 0.48, angW);
-            float fall = max(core, halo * 0.72);
+            float halo = 1.0 - smoothstep(edge * 0.55, edge * 1.18, angW);
+            float core = 1.0 - smoothstep(edge * 0.08, edge * 0.72, angW);
+            float fall = max(core, halo * 0.78);
             if (fall <= 0.001) continue;
-            float grain = fbm3(pos * uNoiseScale * 3.2 + seedOff() + float(si) * 5.1);
-            float rockMask = mix(0.88, 1.0, grain) * fall;
-            // Keep incoming chroma bright — do not crush toward gray.
-            vec3 scarTint = mix(uScarColor[si], min(vec3(1.0), uScarColor[si] * 1.22), grain * 0.55);
+            float grain = fbm3(pos * uNoiseScale * 3.4 + seedOff() + float(si) * 5.1 + uScarSeed[si] * 0.002);
+            // Extra fossil-texture mottling inside the stamp.
+            float fossilGrain = fbm3(pos * uNoiseScale * 5.1 + vec3(uScarSeed[si] * 0.01) + seedOff());
+            float rockMask = mix(0.86, 1.0, grain) * fall;
+            vec3 scarTint = mix(uScarColor[si], min(vec3(1.0), uScarColor[si] * 1.2), fossilGrain * 0.6);
+            scarTint = mix(scarTint, scarTint * 0.82, (1.0 - core) * 0.35);
             c = mix(c, scarTint, clamp(rockMask, 0.0, 1.0));
-            roughnessOut = mix(roughnessOut, 0.93, rockMask * 0.65);
+            roughnessOut = mix(roughnessOut, 0.94, rockMask * 0.7);
           }
 
           return clamp(c, 0.0, 1.0);
@@ -384,12 +417,17 @@ export function applyStoneNoiseParams(material: THREE.MeshStandardMaterial, para
 
   const scars = (params.scars ?? []).slice(0, PLANET_SCAR_MAX)
   uniforms.uScarCount.value = scars.length
+  const profileData = uniforms.uScarProfile.value
   for (let i = 0; i < PLANET_SCAR_MAX; i++) {
     const scar = scars[i]
+    const base = i * IMPRINT_PROFILE_SAMPLES
     if (!scar) {
       uniforms.uScarPos.value[i]!.set(0, 1, 0)
       uniforms.uScarColor.value[i]!.set(0.69, 0.667, 0.635)
       uniforms.uScarRadius.value[i] = 0.75
+      uniforms.uScarSeed.value[i] = 1
+      const flat = defaultCircularProfile()
+      for (let k = 0; k < IMPRINT_PROFILE_SAMPLES; k++) profileData[base + k] = flat[k]!
       continue
     }
     const p = new THREE.Vector3(...scar.localPoint)
@@ -397,5 +435,8 @@ export function applyStoneNoiseParams(material: THREE.MeshStandardMaterial, para
     uniforms.uScarPos.value[i]!.copy(p.normalize())
     uniforms.uScarColor.value[i]!.copy(hexToVec3(scar.color))
     uniforms.uScarRadius.value[i] = scar.radius ?? 0.9 + (i % 3) * 0.08
+    uniforms.uScarSeed.value[i] = scar.imprintSeed ?? i * 17 + 1
+    const profile = normalizeImprintProfile(scar.imprintProfile)
+    for (let k = 0; k < IMPRINT_PROFILE_SAMPLES; k++) profileData[base + k] = profile[k]!
   }
 }

@@ -7,10 +7,13 @@ import {
   type OrbitSystemSettings,
   type PlanetOrbit,
 } from './orbit'
+import { extractImprintProfile } from './fossilImprint'
+import { normalizeMemoryNote } from './history'
 import {
   appendPlanetScar,
   createFormedPlanetFromEntry,
   defaultScarRadius,
+  isImpactScar,
   pickScarColor,
   primaryStoneColor,
   type FormedPlanetState,
@@ -75,7 +78,7 @@ export function bodySignature(body: SystemBody): string {
     body.orbit.eccentricity,
     body.orbit.tilt,
     body.orbit.pace,
-    // Encounter Orbit rewrites phase / node; include so the solar scene rebuilds.
+    // Collide chase rewrites phase / node; include so the solar scene rebuilds.
     body.phase.toFixed(4),
     body.nodeAngle.toFixed(4),
   ].join('~')
@@ -95,7 +98,7 @@ export function bodyCollisionRadius(body: SystemBody, meanRadius = 1): number {
 /**
  * First body: a clear mid-system orbit.
  * Later bodies: normal auto-distance spacing — they do not auto-collide.
- * Use Encounter Orbit on a selected body to aim a meeting with another planet.
+ * Use Collide with… on a selected body, then click another fossil to chase it.
  */
 export function demoInsertionOrbit(
   existing: SystemBody[],
@@ -160,22 +163,41 @@ export function createSystemBodyFromEntry(
   }
 }
 
+function memoryFromAbsorbed(body: SystemBody): { digits: string; memoryNote: string } {
+  const native = body.planet.scars.find((s) => s.kind === 'native')
+  return {
+    digits: native?.digits || body.planet.digits,
+    memoryNote: normalizeMemoryNote(native?.memoryNote),
+  }
+}
+
 export function mergeSystemBodies(
   survivor: SystemBody,
   absorbed: SystemBody,
   collision: Omit<BodyCollision, 'survivorId' | 'absorbedId'>,
 ): SystemBody {
-  const scarIndex = survivor.planet.scars.length + absorbed.planet.scars.length
+  const impactCount =
+    survivor.planet.scars.filter(isImpactScar).length +
+    absorbed.planet.scars.filter(isImpactScar).length
+  const memory = memoryFromAbsorbed(absorbed)
+  // Stamp the absorbed fossil's silhouette along the impact flight direction.
+  const imprintProfile = extractImprintProfile(absorbed.planet.params, collision.direction)
   const scar: PlanetScar = {
     fossilId: absorbed.planet.baseId,
     color: collision.color,
     localPoint: collision.localPoint,
     direction: collision.direction,
-    radius: defaultScarRadius(scarIndex),
+    radius: defaultScarRadius(impactCount),
+    kind: 'impact',
+    digits: memory.digits,
+    memoryNote: memory.memoryNote,
+    imprintProfile,
+    imprintSeed: absorbed.planet.seed,
   }
-  // Keep survivor surface history; add the new contact mark.
+  // Keep survivor landmarks; carry absorbed impact history; bind absorbed memory to the new band.
   let planet = { ...survivor.planet, scars: [...survivor.planet.scars] }
   for (const prev of absorbed.planet.scars) {
+    if (!isImpactScar(prev)) continue
     planet = appendPlanetScar(planet, prev)
   }
   planet = appendPlanetScar(planet, scar)
