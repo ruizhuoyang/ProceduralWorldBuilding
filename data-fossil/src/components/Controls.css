@@ -583,6 +583,19 @@
   border-color: var(--accent-hot);
 }
 
+.controls__btn:disabled,
+.controls__btn--primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.controls__hint {
+  margin: 0.15rem 0 0.55rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 .controls__modes {
   display: grid;
   grid-template-columns: 1fr 1fr;

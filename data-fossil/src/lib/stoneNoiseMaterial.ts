@@ -1,7 +1,14 @@
 import * as THREE from 'three'
+import { PLANET_SCAR_MAX } from './planetFormation'
 import { STONE_COLOR_MAX, normalizeColorAlts, normalizeStoneColors } from './types'
 
-const CACHE_KEY = 'data-fossil-stone-noise-v6'
+const CACHE_KEY = 'data-fossil-stone-noise-v12'
+
+export type StoneScarParams = {
+  localPoint: [number, number, number]
+  color: string
+  radius?: number
+}
 
 export type StoneNoiseParams = {
   colors: string[]
@@ -12,6 +19,7 @@ export type StoneNoiseParams = {
   heightBlend?: number
   radiusMin?: number
   radiusMax?: number
+  scars?: StoneScarParams[]
 }
 
 type StoneUniforms = {
@@ -24,6 +32,10 @@ type StoneUniforms = {
   uHeightBlend: { value: number }
   uRadiusMin: { value: number }
   uRadiusMax: { value: number }
+  uScarPos: { value: THREE.Vector3[] }
+  uScarColor: { value: THREE.Vector3[] }
+  uScarRadius: { value: number[] }
+  uScarCount: { value: number }
 }
 
 function hexToVec3(hex: string): THREE.Vector3 {
@@ -70,10 +82,20 @@ export function enableStoneNoiseMaterial(material: THREE.MeshStandardMaterial): 
     uHeightBlend: { value: 0.45 },
     uRadiusMin: { value: 0.4 },
     uRadiusMax: { value: 1.75 },
+    uScarPos: {
+      value: Array.from({ length: PLANET_SCAR_MAX }, () => new THREE.Vector3(0, 1, 0)),
+    },
+    uScarColor: {
+      value: Array.from({ length: PLANET_SCAR_MAX }, () => new THREE.Vector3(0.69, 0.667, 0.635)),
+    },
+    uScarRadius: { value: Array.from({ length: PLANET_SCAR_MAX }, () => 0.75) },
+    uScarCount: { value: 0 },
   }
   material.userData.stoneUniforms = uniforms
 
-  material.customProgramCacheKey = () => CACHE_KEY
+  // Unique key per material so scar uniforms are not shared across planets.
+  const programId = `${CACHE_KEY}-${Math.random().toString(36).slice(2, 9)}`
+  material.customProgramCacheKey = () => programId
 
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uColors = uniforms.uColors
@@ -85,6 +107,10 @@ export function enableStoneNoiseMaterial(material: THREE.MeshStandardMaterial): 
     shader.uniforms.uHeightBlend = uniforms.uHeightBlend
     shader.uniforms.uRadiusMin = uniforms.uRadiusMin
     shader.uniforms.uRadiusMax = uniforms.uRadiusMax
+    shader.uniforms.uScarPos = uniforms.uScarPos
+    shader.uniforms.uScarColor = uniforms.uScarColor
+    shader.uniforms.uScarRadius = uniforms.uScarRadius
+    shader.uniforms.uScarCount = uniforms.uScarCount
 
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -126,6 +152,10 @@ export function enableStoneNoiseMaterial(material: THREE.MeshStandardMaterial): 
         uniform float uHeightBlend;
         uniform float uRadiusMin;
         uniform float uRadiusMax;
+        uniform vec3 uScarPos[${PLANET_SCAR_MAX}];
+        uniform vec3 uScarColor[${PLANET_SCAR_MAX}];
+        uniform float uScarRadius[${PLANET_SCAR_MAX}];
+        uniform int uScarCount;
         uniform mat3 normalMatrix;
 
         vec3 seedOff() {
@@ -257,6 +287,31 @@ export function enableStoneNoiseMaterial(material: THREE.MeshStandardMaterial): 
           c *= pore;
 
           roughnessOut = clamp(0.72 + n1 * 0.14 - dustMask * 0.1, 0.2, 1.0);
+
+          // Impact stains: irregular rock bands in the incoming fossil color.
+          // Warp the angular edge so the patch looks like accreted stone, not a disc.
+          vec3 npos = normalize(pos);
+          for (int si = 0; si < ${PLANET_SCAR_MAX}; si++) {
+            if (si >= uScarCount) break;
+            vec3 scarN = normalize(uScarPos[si]);
+            float ang = acos(clamp(dot(npos, scarN), -1.0, 1.0));
+            float rad = max(uScarRadius[si], 0.35);
+            float edgeNoise = fbm3(pos * uNoiseScale * 2.2 + seedOff() + float(si) * 7.3);
+            float warp = (edgeNoise - 0.5) * rad * 0.7;
+            float angW = max(0.0, ang + warp);
+            // Wide soft halo + dense core so the hue reads at stellar camera distance.
+            float halo = 1.0 - smoothstep(rad * 0.2, rad * 1.25, angW);
+            float core = 1.0 - smoothstep(rad * 0.05, rad * 0.48, angW);
+            float fall = max(core, halo * 0.72);
+            if (fall <= 0.001) continue;
+            float grain = fbm3(pos * uNoiseScale * 3.2 + seedOff() + float(si) * 5.1);
+            float rockMask = mix(0.88, 1.0, grain) * fall;
+            // Keep incoming chroma bright — do not crush toward gray.
+            vec3 scarTint = mix(uScarColor[si], min(vec3(1.0), uScarColor[si] * 1.22), grain * 0.55);
+            c = mix(c, scarTint, clamp(rockMask, 0.0, 1.0));
+            roughnessOut = mix(roughnessOut, 0.93, rockMask * 0.65);
+          }
+
           return clamp(c, 0.0, 1.0);
         }
 
@@ -326,4 +381,21 @@ export function applyStoneNoiseParams(material: THREE.MeshStandardMaterial, para
   uniforms.uHeightBlend.value = params.heightBlend ?? 0.45
   uniforms.uRadiusMin.value = params.radiusMin ?? 0.4
   uniforms.uRadiusMax.value = params.radiusMax ?? 1.75
+
+  const scars = (params.scars ?? []).slice(0, PLANET_SCAR_MAX)
+  uniforms.uScarCount.value = scars.length
+  for (let i = 0; i < PLANET_SCAR_MAX; i++) {
+    const scar = scars[i]
+    if (!scar) {
+      uniforms.uScarPos.value[i]!.set(0, 1, 0)
+      uniforms.uScarColor.value[i]!.set(0.69, 0.667, 0.635)
+      uniforms.uScarRadius.value[i] = 0.75
+      continue
+    }
+    const p = new THREE.Vector3(...scar.localPoint)
+    if (p.lengthSq() < 1e-8) p.set(0, 1, 0)
+    uniforms.uScarPos.value[i]!.copy(p.normalize())
+    uniforms.uScarColor.value[i]!.copy(hexToVec3(scar.color))
+    uniforms.uScarRadius.value[i] = scar.radius ?? 0.9 + (i % 3) * 0.08
+  }
 }

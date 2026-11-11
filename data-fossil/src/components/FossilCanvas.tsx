@@ -1,16 +1,15 @@
-import { useEffect, useImperativeHandle, useRef, forwardRef } from 'react'
+﻿import { useEffect, useImperativeHandle, useRef, forwardRef } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js'
 import { STLExporter } from 'three/addons/exporters/STLExporter.js'
 import { buildFossilGeometry } from '../lib/buildFossilGeometry'
 import type { FossilHistoryEntry } from '../lib/history'
+import { DEFAULT_ORBIT_SYSTEM, type OrbitSystemSettings } from '../lib/orbit'
+import { buildFormedPlanetGeometry } from '../lib/planetFormation'
 import {
-  DEFAULT_ORBIT_SYSTEM,
-  planetMeshSignature,
-  type OrbitSystemSettings,
-} from '../lib/orbit'
-import {
+  applySolarPhases,
+  captureSolarPhases,
   createSolarSystem,
   disposeSolarSystem,
   ORBIT_HOME,
@@ -28,6 +27,15 @@ import {
   type AtmosphereSystem,
 } from '../lib/atmosphere'
 import { applyStoneNoiseParams, enableStoneNoiseMaterial } from '../lib/stoneNoiseMaterial'
+import {
+  disposeAccretionAnim,
+  startAccretionAnim,
+  tickAccretionAnim,
+  type AccretionAnim,
+} from '../lib/accretionAnim'
+import { encounterLocalPoint } from '../lib/encounterOrbit'
+import { systemMeshKey, type BodyCollision, type SystemBody } from '../lib/systemBodies'
+import type { EncounterPreviewState } from './OrbitPalette'
 import type {
   AtmosphereParams,
   DigitRegion,
@@ -41,6 +49,8 @@ export type FossilCanvasHandle = {
   resetView: () => void
   captureThumbnail: () => string | null
   exportSTL: (filename?: string) => void
+  /** Live orbital phases for session bodies (for demo-friendly inserts). */
+  getSolarPhases: () => Record<string, number>
 }
 
 type FossilCanvasProps = {
@@ -58,9 +68,16 @@ type FossilCanvasProps = {
   interiorView: boolean
   /** View-mode camera standing on the stone surface */
   surfaceView: boolean
+  /** Bodies currently in the stellar system (session). */
+  systemBodies: SystemBody[]
+  /** Body to show in surface view when set; otherwise studio rock. */
+  surfaceBody: SystemBody | null
   historyEntries: FossilHistoryEntry[]
   orbitSettings?: OrbitSystemSettings
+  /** Planned meeting spot for Encounter Orbit (scene marker). */
+  encounterPreview?: EncounterPreviewState
   onSeedChange: (seed: number) => void
+  onBodiesCollide: (collision: BodyCollision) => void
 }
 
 type SceneBag = {
@@ -96,6 +113,10 @@ type SceneBag = {
   atmospherePlaying: boolean
   seed: number
   clock: THREE.Clock
+  collisionLockUntil: number
+  surfaceBodyId: string | null
+  accretion: AccretionAnim | null
+  encounterMarker: THREE.Group | null
 }
 
 type SurfaceFpsState = {
@@ -415,7 +436,7 @@ function applySurfacePose(bag: SceneBag) {
   bag.camera.updateMatrixWorld()
 }
 
-function initSurfaceFps(bag: SceneBag) {
+function initSurfaceFps(bag: SceneBag, seekDir?: THREE.Vector3 | null) {
   if (!bag.surfaceFps) {
     bag.surfaceFps = {
       yaw: 0,
@@ -433,8 +454,9 @@ function initSurfaceFps(bag: SceneBag) {
   fps.keys.clear()
   fps.dragging = false
   fps.pitch = -0.12
+  const seek = seekDir && seekDir.lengthSq() > 1e-8 ? seekDir.clone().normalize() : SURFACE_SEEK
   pickSurfaceFoot(bag.rock.geometry, fps.foot, fps.up)
-  if (!raycastSurface(bag, SURFACE_SEEK, fps.foot, fps.up)) {
+  if (!raycastSurface(bag, seek, fps.foot, fps.up)) {
     pickSurfaceFoot(bag.rock.geometry, fps.foot, fps.up)
   }
   // Face roughly outward / horizon
@@ -452,13 +474,13 @@ function initSurfaceFps(bag: SceneBag) {
   }
 }
 
-function setSurfaceCamera(bag: SceneBag) {
+function setSurfaceCamera(bag: SceneBag, seekDir?: THREE.Vector3 | null) {
   bag.rock.rotation.set(0, 0, 0)
   bag.controls.enabled = false
   bag.camera.fov = SURFACE_FOV
   bag.camera.near = 0.008
   bag.camera.updateProjectionMatrix()
-  initSurfaceFps(bag)
+  initSurfaceFps(bag, seekDir)
   applySurfacePose(bag)
 }
 
@@ -504,6 +526,79 @@ function applyCameraRig(bag: SceneBag) {
   else setOrbitCamera(bag, false)
 }
 
+function ensureEncounterMarker(bag: SceneBag) {
+  if (bag.encounterMarker) return bag.encounterMarker
+  const root = new THREE.Group()
+  root.name = 'encounterPreview'
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.12, 0.18, 28),
+    new THREE.MeshBasicMaterial({
+      color: 0xc4a574,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  )
+  ring.rotation.x = -Math.PI / 2
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(0.05, 12, 10),
+    new THREE.MeshBasicMaterial({ color: 0xe8d2a8, transparent: true, opacity: 0.95 }),
+  )
+  const labelEl = document.createElement('div')
+  labelEl.className = 'fossil-planet-label'
+  labelEl.textContent = 'Meet'
+  const label = new CSS2DObject(labelEl)
+  label.position.set(0, 0.22, 0)
+  root.add(ring)
+  root.add(dot)
+  root.add(label)
+  bag.encounterMarker = root
+  return root
+}
+
+function clearEncounterMarker(bag: SceneBag) {
+  const marker = bag.encounterMarker
+  if (!marker) return
+  marker.traverse((obj) => {
+    const mesh = obj as THREE.Mesh
+    if (mesh.geometry) mesh.geometry.dispose()
+    const mat = mesh.material
+    if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
+    else if (mat) mat.dispose()
+    const css = obj as CSS2DObject
+    if (css.element?.parentNode) css.element.parentNode.removeChild(css.element)
+  })
+  if (marker.parent) marker.parent.remove(marker)
+  bag.encounterMarker = null
+}
+
+function syncEncounterMarker(
+  bag: SceneBag,
+  preview: EncounterPreviewState,
+  bodies: SystemBody[],
+  settings: OrbitSystemSettings,
+) {
+  if (!bag.solar || !preview) {
+    if (bag.encounterMarker) bag.encounterMarker.visible = false
+    return
+  }
+  const targetBody = bodies.find((b) => b.id === preview.targetId)
+  const targetPlanet = bag.solar.planets.find((p) => p.id === preview.targetId)
+  if (!targetBody || !targetPlanet) {
+    if (bag.encounterMarker) bag.encounterMarker.visible = false
+    return
+  }
+  const marker = ensureEncounterMarker(bag)
+  if (marker.parent !== targetPlanet.pivot) {
+    targetPlanet.pivot.add(marker)
+  }
+  const index = Math.max(0, bodies.findIndex((b) => b.id === targetBody.id))
+  const [x, y, z] = encounterLocalPoint(targetBody, preview.meetPhase, settings, index)
+  marker.position.set(x, y, z)
+  marker.visible = true
+}
+
 const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function FossilCanvas(
   {
     params,
@@ -516,9 +611,13 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     orbitSystem,
     interiorView,
     surfaceView,
+    systemBodies,
+    surfaceBody,
     historyEntries,
     orbitSettings = DEFAULT_ORBIT_SYSTEM,
+    encounterPreview = null,
     onSeedChange,
+    onBodiesCollide,
   },
   ref,
 ) {
@@ -532,10 +631,14 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
   const orbitSystemRef = useRef(orbitSystem)
   const interiorViewRef = useRef(interiorView)
   const surfaceViewRef = useRef(surfaceView)
+  const systemBodiesRef = useRef(systemBodies)
+  const surfaceBodyRef = useRef(surfaceBody)
   const historyRef = useRef(historyEntries)
   const orbitSettingsRef = useRef(orbitSettings)
+  const encounterPreviewRef = useRef(encounterPreview)
   const wireframeRef = useRef(wireframe)
   const onSeedChangeRef = useRef(onSeedChange)
+  const onBodiesCollideRef = useRef(onBodiesCollide)
 
   useEffect(() => {
     paramsRef.current = params
@@ -574,11 +677,23 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     onSeedChangeRef.current = onSeedChange
   }, [onSeedChange])
   useEffect(() => {
+    onBodiesCollideRef.current = onBodiesCollide
+  }, [onBodiesCollide])
+  useEffect(() => {
     historyRef.current = historyEntries
   }, [historyEntries])
   useEffect(() => {
+    systemBodiesRef.current = systemBodies
+  }, [systemBodies])
+  useEffect(() => {
+    surfaceBodyRef.current = surfaceBody
+  }, [surfaceBody])
+  useEffect(() => {
     orbitSettingsRef.current = orbitSettings
   }, [orbitSettings])
+  useEffect(() => {
+    encounterPreviewRef.current = encounterPreview
+  }, [encounterPreview])
   useEffect(() => {
     wireframeRef.current = wireframe
   }, [wireframe])
@@ -643,6 +758,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       a.click()
       URL.revokeObjectURL(url)
     },
+    getSolarPhases: () => captureSolarPhases(bagRef.current?.solar ?? null),
   }))
 
   useEffect(() => {
@@ -744,6 +860,10 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       atmospherePlaying: false,
       seed: 0,
       clock: new THREE.Clock(),
+      collisionLockUntil: 0,
+      surfaceBodyId: null,
+      accretion: null,
+      encounterMarker: null,
     }
     bagRef.current = bag
     applyLighting(bag, lightingRef.current)
@@ -769,6 +889,39 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     }
 
     const rebuild = () => {
+      // Surface of a system body uses formed geometry instead of the studio fossil.
+      const focus = bag.surfaceView ? surfaceBodyRef.current : null
+      if (focus) {
+        const built = buildFormedPlanetGeometry(focus.planet)
+        const prev = bag.rock.geometry
+        bag.rock.geometry = built.geometry
+        prev.dispose()
+        applyStoneNoiseParams(bag.material, {
+          colors: built.params.stoneColors,
+          colorAlts: built.params.colorAlts,
+          seed: built.seed,
+          normalStrength: built.params.normalStrength,
+          noiseScale: 2.4,
+          heightBlend: built.params.heightBlend,
+          radiusMin: built.radiusMin,
+          radiusMax: built.radiusMax,
+          scars: built.scars,
+        })
+        bag.seed = built.seed
+        bag.surfaceBodyId = focus.id
+        disposeStudioAtmosphere(bag)
+        bag.mappingGroup.visible = false
+        if (bag.surfaceView) {
+          const latest = focus.planet.scars[focus.planet.scars.length - 1]
+          const seek = latest
+            ? new THREE.Vector3(...latest.localPoint)
+            : null
+          setSurfaceCamera(bag, seek)
+        }
+        return
+      }
+
+      bag.surfaceBodyId = null
       const p = paramsRef.current
       const prev = bag.rock.geometry
       const { geometry, seed, regions, radiusMin, radiusMax } = buildFossilGeometry(p)
@@ -791,16 +944,25 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     }
 
     const rebuildSolar = () => {
+      if (bag.accretion) {
+        disposeAccretionAnim(bag.accretion)
+        bag.accretion = null
+      }
+      const phases = captureSolarPhases(bag.solar)
       clearSolar(bag)
       bag.solarMeshKey = ''
       if (!bag.orbitSystem) return
-      const entries = historyRef.current
-      const solar = createSolarSystem(entries, orbitSettingsRef.current)
+      const bodies = systemBodiesRef.current.map((body) =>
+        typeof phases[body.id] === 'number' ? { ...body, phase: phases[body.id]! } : body,
+      )
+      const solar = createSolarSystem(bodies, orbitSettingsRef.current)
+      applySolarPhases(solar, phases)
       bag.solar = solar
-      bag.solarMeshKey = entries.map(planetMeshSignature).join('||')
+      bag.solarMeshKey = systemMeshKey(bodies)
       bag.scene.add(solar.root)
       setSolarSystemWireframe(solar, wireframeRef.current)
       setSolarAtmosphereState(solar, atmosphereRef.current.visible, wireframeRef.current)
+      bag.collisionLockUntil = performance.now() + 700
     }
 
     const applyOrbitSystem = (on: boolean) => {
@@ -819,6 +981,11 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         rebuildSolar()
         applyCameraRig(bag)
       } else {
+        if (bag.accretion) {
+          disposeAccretionAnim(bag.accretion)
+          bag.accretion = null
+        }
+        clearEncounterMarker(bag)
         clearSolar(bag)
         bag.rock.visible = true
         bag.worldGroup.visible =
@@ -864,6 +1031,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         bag.rock.visible = true
         bag.mappingGroup.visible = false
         bag.worldGroup.visible = false
+        rebuild()
         syncAtmosphere(bag, wireframeRef.current)
         applyLighting(bag, lightingRef.current)
         applyCameraRig(bag)
@@ -875,6 +1043,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         applyLighting(bag, lightingRef.current)
         if (!bag.orbitSystem) applyCameraRig(bag)
         if (showMappingRef.current && !bag.orbitSystem && !bag.interiorView) rebuild()
+        else if (!bag.orbitSystem && !surfaceBodyRef.current) rebuild()
       }
     }
 
@@ -889,13 +1058,55 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       const dt = bag.clock.getDelta()
 
       if (bag.orbitSystem && bag.solar) {
-        tickSolarSystem(
-          bag.solar,
-          dt,
-          orbitSettingsRef.current.playing,
-          bag.atmospherePlaying,
-        )
+        syncEncounterMarker(bag, encounterPreviewRef.current, systemBodiesRef.current, orbitSettingsRef.current)
+        if (bag.accretion) {
+          const done = tickAccretionAnim(
+            bag.accretion,
+            bag.solar,
+            dt,
+            orbitSettingsRef.current.playing,
+          )
+          if (done) {
+            const collision = bag.accretion.collision
+            disposeAccretionAnim(bag.accretion)
+            bag.accretion = null
+            bag.collisionLockUntil = performance.now() + 900
+            const phases = captureSolarPhases(bag.solar)
+            systemBodiesRef.current = systemBodiesRef.current.map((body) =>
+              typeof phases[body.id] === 'number' ? { ...body, phase: phases[body.id]! } : body,
+            )
+            onBodiesCollideRef.current(collision)
+          }
+        } else {
+          const collision = tickSolarSystem(
+            bag.solar,
+            dt,
+            orbitSettingsRef.current.playing,
+            bag.atmospherePlaying,
+            systemBodiesRef.current,
+            historyRef.current,
+          )
+          if (collision && performance.now() >= bag.collisionLockUntil) {
+            const survivorBody = systemBodiesRef.current.find((b) => b.id === collision.survivorId)
+            const absorbedBody = systemBodiesRef.current.find((b) => b.id === collision.absorbedId)
+            const survivorPlanet = bag.solar.planets.find((p) => p.id === collision.survivorId)
+            const absorbedPlanet = bag.solar.planets.find((p) => p.id === collision.absorbedId)
+            if (survivorBody && absorbedBody && survivorPlanet && absorbedPlanet) {
+              // Freeze React list until the visible merge finishes.
+              bag.collisionLockUntil = Number.POSITIVE_INFINITY
+              bag.accretion = startAccretionAnim(
+                bag.solar,
+                survivorPlanet,
+                absorbedPlanet,
+                collision,
+                survivorBody,
+                absorbedBody,
+              )
+            }
+          }
+        }
       } else {
+        clearEncounterMarker(bag)
         if (bag.viewportMode === 'view' && !isLookAroundView(bag)) {
           bag.rock.rotation.y += dt * VIEW_SPIN_RAD_PER_SEC
         }
@@ -1025,6 +1236,11 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       bag.controls.dispose()
       disposeMappingShared(bag.mappingGroup)
       clearMapping(bag.mappingGroup)
+      if (bag.accretion) {
+        disposeAccretionAnim(bag.accretion)
+        bag.accretion = null
+      }
+      clearEncounterMarker(bag)
       clearSolar(bag)
       disposeStudioAtmosphere(bag)
       while (bag.worldGroup.children.length > 0) {
@@ -1099,13 +1315,19 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
   useEffect(() => {
     const bag = bagRef.current as (SceneBag & { rebuildSolar?: () => void }) | null
     if (!bag?.orbitSystem) return
-    const nextKey = historyEntries.map(planetMeshSignature).join('||')
+    const nextKey = systemMeshKey(systemBodies)
     if (bag.solarMeshKey !== nextKey || !bag.solar) {
       bag.rebuildSolar?.()
       return
     }
-    syncSolarOrbits(bag.solar, historyEntries, orbitSettings)
-  }, [historyEntries, orbitSettings])
+    syncSolarOrbits(bag.solar, systemBodies, orbitSettings)
+  }, [systemBodies, orbitSettings])
+
+  useEffect(() => {
+    const bag = bagRef.current as (SceneBag & { rebuild?: () => void }) | null
+    if (!bag || bag.orbitSystem) return
+    if (bag.surfaceView) bag.rebuild?.()
+  }, [surfaceBody, surfaceView])
 
   return <div className="fossil-canvas" ref={containerRef} aria-label="Data Fossil viewport" />
 })

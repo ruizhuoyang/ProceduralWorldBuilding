@@ -1,6 +1,5 @@
 import * as THREE from 'three'
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js'
-import { buildFossilGeometry } from './buildFossilGeometry'
 import {
   createAtmosphere,
   disposeAtmosphere,
@@ -8,7 +7,6 @@ import {
   stepAtmosphere,
   type AtmosphereSystem,
 } from './atmosphere'
-import type { FossilHistoryEntry } from './history'
 import {
   orbitRadiusAt,
   orbitSpeedWithPace,
@@ -18,14 +16,17 @@ import {
   resolveOrbitDistance,
   type OrbitSystemSettings,
 } from './orbit'
+import { buildFormedPlanetGeometry } from './planetFormation'
 import { applyStoneNoiseParams, enableStoneNoiseMaterial } from './stoneNoiseMaterial'
 import {
-  DEFAULT_FOSSIL_PARAMS,
-  MESH_RESOLUTION_PLANET_MAX,
-  normalizeMeshResolution,
-  normalizeOctaves,
-  type FossilParams,
-} from './types'
+  bodyCollisionRadius,
+  colorForAbsorbed,
+  pickSurvivor,
+  worldToMeshLocal,
+  type BodyCollision,
+  type SystemBody,
+} from './systemBodies'
+import type { FossilHistoryEntry } from './history'
 
 export type PlanetBody = {
   id: string
@@ -42,6 +43,9 @@ export type PlanetBody = {
   material: THREE.MeshStandardMaterial
   atmosphere: AtmosphereSystem | null
   atmosphereSavedVisible: boolean
+  /** Approximate unscaled mesh radius for collision. */
+  meanRadius: number
+  collisionRadius: number
 }
 
 export type SolarSystem = {
@@ -53,27 +57,13 @@ export type SolarSystem = {
 
 const TAU = Math.PI * 2
 const ORBIT_SEGS = 96
+const _worldA = new THREE.Vector3()
+const _worldB = new THREE.Vector3()
+const _local = new THREE.Vector3()
+const _dir = new THREE.Vector3()
 
 function solarAtmosphereSizeMul(scale: number): number {
   return Math.min(3.8, Math.max(2.0, 0.5 / Math.max(0.08, scale)))
-}
-
-export function entryToPlanetParams(entry: FossilHistoryEntry): FossilParams {
-  return {
-    ...DEFAULT_FOSSIL_PARAMS,
-    digits: entry.digits,
-    noiseStrength: entry.params.noiseStrength,
-    noiseScale: entry.params.noiseScale,
-    digitStrength: entry.params.digitStrength,
-    stoneColors: entry.params.stoneColors,
-    colorAlts: entry.params.colorAlts,
-    normalStrength: entry.params.normalStrength,
-    heightBlend: entry.params.heightBlend,
-    detail: Math.min(normalizeMeshResolution(entry.params.detail), MESH_RESOLUTION_PLANET_MAX),
-    fbmOctaves: Math.min(normalizeOctaves(entry.params.fbmOctaves), 6),
-    landformLayers: entry.params.landformLayers,
-    baseRadius: 1,
-  }
 }
 
 function orbitPoints(semiMajor: number, ecc: number): THREE.Vector3[] {
@@ -109,26 +99,29 @@ function placePlanet(planet: PlanetBody) {
 
 export function syncSolarOrbits(
   system: SolarSystem,
-  entries: FossilHistoryEntry[],
+  bodies: SystemBody[],
   settings: OrbitSystemSettings,
 ) {
   for (let i = 0; i < system.planets.length; i++) {
     const planet = system.planets[i]!
-    const entry = entries.find((item) => item.id === planet.id)
-    if (!entry) continue
-    const semiMajor = resolveOrbitDistance(entry.orbit, i, settings.spread)
-    const eccentricity = resolveEccentricity(entry.orbit, settings.shape)
-    const scale = planetDisplayScale(entry.orbit.size)
+    const body = bodies.find((item) => item.id === planet.id)
+    if (!body) continue
+    const semiMajor = resolveOrbitDistance(body.orbit, i, settings.spread)
+    const eccentricity = resolveEccentricity(body.orbit, settings.shape)
+    const scale = planetDisplayScale(body.orbit.size)
     planet.semiMajor = semiMajor
     planet.eccentricity = eccentricity
-    planet.orbitSpeed = orbitSpeedWithPace(semiMajor, entry.orbit.pace)
+    planet.orbitSpeed = orbitSpeedWithPace(semiMajor, body.orbit.pace)
+    planet.nodeAngle = body.nodeAngle
+    planet.spinSpeed = body.spinSpeed
     planet.pivot.rotation.set(
-      orbitTiltRadians(entry.orbit.tilt),
+      orbitTiltRadians(body.orbit.tilt),
       planet.nodeAngle + Math.PI * 0.5,
       0,
       'YXZ',
     )
     planet.mesh.scale.setScalar(scale)
+    planet.collisionRadius = bodyCollisionRadius(body, planet.meanRadius)
     if (planet.atmosphere) setAtmosphereSizeMul(planet.atmosphere, solarAtmosphereSizeMul(scale))
     const label = planet.holder.children.find((child) => child instanceof CSS2DObject)
     if (label) label.position.set(0, scale * 1.35, 0)
@@ -137,8 +130,87 @@ export function syncSolarOrbits(
   }
 }
 
+function addPlanetBody(
+  root: THREE.Group,
+  planets: PlanetBody[],
+  body: SystemBody,
+  index: number,
+) {
+  const built = buildFormedPlanetGeometry(body.planet)
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 1,
+    metalness: 0,
+  })
+  enableStoneNoiseMaterial(material)
+  applyStoneNoiseParams(material, {
+    colors: built.params.stoneColors,
+    colorAlts: built.params.colorAlts,
+    seed: built.seed,
+    normalStrength: built.params.normalStrength,
+    noiseScale: 2.4,
+    heightBlend: built.params.heightBlend,
+    radiusMin: built.radiusMin,
+    radiusMax: built.radiusMax,
+    scars: built.scars,
+  })
+
+  const mesh = new THREE.Mesh(built.geometry, material)
+  const orbitLine = makeOrbitLine(2.4, 0)
+
+  const pivot = new THREE.Group()
+  pivot.rotation.order = 'YXZ'
+
+  const holder = new THREE.Group()
+  holder.add(mesh)
+  const scale = planetDisplayScale(body.orbit.size)
+  const atmosphere = createAtmosphere(
+    built.geometry,
+    built.seed,
+    { ...body.planet.atmosphere, height: Math.max(body.planet.atmosphere.height, 0.08) },
+    {
+      maxCount: 2800,
+      sizeMul: solarAtmosphereSizeMul(scale),
+      limb: 0.12,
+    },
+  )
+  if (atmosphere) mesh.add(atmosphere.points)
+
+  const labelEl = document.createElement('div')
+  labelEl.className = 'fossil-planet-label'
+  labelEl.textContent = body.label
+  const label = new CSS2DObject(labelEl)
+  holder.add(label)
+
+  pivot.add(orbitLine)
+  pivot.add(holder)
+  root.add(pivot)
+
+  planets.push({
+    id: body.id,
+    pivot,
+    holder,
+    mesh,
+    orbitLine,
+    semiMajor: 2.4,
+    eccentricity: 0,
+    orbitSpeed: 0.2,
+    spinSpeed: body.spinSpeed,
+    nodeAngle: body.nodeAngle,
+    phase: body.phase,
+    material,
+    atmosphere,
+    atmosphereSavedVisible: body.planet.atmosphere.visible,
+    meanRadius: built.meanRadius,
+    collisionRadius: bodyCollisionRadius(body, built.meanRadius),
+  })
+
+  // Silence unused index lint in case of future spacing logic.
+  void index
+}
+
 export function createSolarSystem(
-  entries: FossilHistoryEntry[],
+  bodies: SystemBody[],
   settings: OrbitSystemSettings,
 ): SolarSystem {
   const root = new THREE.Group()
@@ -160,80 +232,10 @@ export function createSolarSystem(
   root.add(starLight)
 
   const planets: PlanetBody[] = []
-
-  entries.forEach((entry, index) => {
-    const params = entryToPlanetParams(entry)
-    const { geometry, seed, radiusMin, radiusMax } = buildFossilGeometry(params)
-    const material = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      roughness: 1,
-      metalness: 0,
-    })
-    enableStoneNoiseMaterial(material)
-    applyStoneNoiseParams(material, {
-      colors: params.stoneColors,
-      colorAlts: params.colorAlts,
-      seed,
-      normalStrength: params.normalStrength,
-      noiseScale: 2.4,
-      heightBlend: params.heightBlend,
-      radiusMin,
-      radiusMax,
-    })
-
-    const mesh = new THREE.Mesh(geometry, material)
-    const orbitLine = makeOrbitLine(2.4, 0)
-
-    const pivot = new THREE.Group()
-    pivot.rotation.order = 'YXZ'
-    const nodeAngle = (((seed >>> 16) & 0xffff) / 65535) * Math.PI * 2
-
-    const holder = new THREE.Group()
-    holder.add(mesh)
-    const scale = planetDisplayScale(entry.orbit.size)
-    const atmosphere = createAtmosphere(
-      geometry,
-      seed,
-      { ...entry.atmosphere, height: Math.max(entry.atmosphere.height, 0.08) },
-      {
-        maxCount: 2800,
-        sizeMul: solarAtmosphereSizeMul(scale),
-        limb: 0.12,
-      },
-    )
-    if (atmosphere) mesh.add(atmosphere.points)
-
-    const labelEl = document.createElement('div')
-    labelEl.className = 'fossil-planet-label'
-    labelEl.textContent = entry.digits
-    const label = new CSS2DObject(labelEl)
-    holder.add(label)
-
-    pivot.add(orbitLine)
-    pivot.add(holder)
-    root.add(pivot)
-
-    const phase = (index / Math.max(1, entries.length)) * TAU + ((seed % 1000) / 1000) * 0.8
-    planets.push({
-      id: entry.id,
-      pivot,
-      holder,
-      mesh,
-      orbitLine,
-      semiMajor: 2.4,
-      eccentricity: 0,
-      orbitSpeed: 0.2,
-      spinSpeed: 0.55 + ((seed % 80) / 80) * 0.9,
-      nodeAngle,
-      phase,
-      material,
-      atmosphere,
-      atmosphereSavedVisible: entry.atmosphere.visible,
-    })
-  })
+  bodies.forEach((body, index) => addPlanetBody(root, planets, body, index))
 
   const system = { root, star, starLight, planets }
-  syncSolarOrbits(system, entries, settings)
+  syncSolarOrbits(system, bodies, settings)
   return system
 }
 
@@ -259,12 +261,34 @@ export function disposeSolarSystem(system: SolarSystem | null | undefined) {
   system.root.clear()
 }
 
+export function captureSolarPhases(system: SolarSystem | null | undefined): Record<string, number> {
+  const out: Record<string, number> = {}
+  if (!system) return out
+  for (const planet of system.planets) out[planet.id] = planet.phase
+  return out
+}
+
+export function applySolarPhases(system: SolarSystem, phases: Record<string, number>) {
+  for (const planet of system.planets) {
+    if (typeof phases[planet.id] === 'number') {
+      planet.phase = phases[planet.id]!
+      placePlanet(planet)
+    }
+  }
+}
+
+/**
+ * Advance orbits, then test pairwise contact in world space.
+ * Orbit paths may cross visually without a hit until both bodies occupy nearby 3D positions.
+ */
 export function tickSolarSystem(
   system: SolarSystem,
   dt: number,
   playing = true,
   particlesPlaying = false,
-) {
+  bodies?: SystemBody[],
+  history?: FossilHistoryEntry[],
+): BodyCollision | null {
   if (playing) {
     system.star.rotation.y += dt * 0.25
     for (const planet of system.planets) {
@@ -275,11 +299,74 @@ export function tickSolarSystem(
   } else {
     for (const planet of system.planets) placePlanet(planet)
   }
-  if (!particlesPlaying) return
-  for (const planet of system.planets) {
-    if (!planet.atmosphere || !planet.atmosphere.points.visible) continue
-    stepAtmosphere(planet.atmosphere, dt, planet.mesh.geometry)
+
+  if (particlesPlaying) {
+    for (const planet of system.planets) {
+      if (!planet.atmosphere || !planet.atmosphere.points.visible) continue
+      stepAtmosphere(planet.atmosphere, dt, planet.mesh.geometry)
+    }
   }
+
+  if (!bodies || bodies.length < 2) return null
+
+  // placePlanet only writes local transforms — refresh world matrices before contact tests.
+  system.root.updateMatrixWorld(true)
+
+  for (let i = 0; i < system.planets.length; i++) {
+    const pa = system.planets[i]!
+    pa.holder.getWorldPosition(_worldA)
+    for (let j = i + 1; j < system.planets.length; j++) {
+      const pb = system.planets[j]!
+      pb.holder.getWorldPosition(_worldB)
+      const dist = _worldA.distanceTo(_worldB)
+      const reach = pa.collisionRadius + pb.collisionRadius
+      // Same-track angular gate: catches near-miss tunneling when centers share a circle.
+      const dSemi = Math.abs(pa.semiMajor - pb.semiMajor)
+      const dPhase = Math.abs(Math.atan2(Math.sin(pa.phase - pb.phase), Math.cos(pa.phase - pb.phase)))
+      const sameTrackHit = dSemi < 0.2 && dPhase < 0.28
+      if (dist > reach && !sameTrackHit) continue
+
+      const bodyA = bodies.find((b) => b.id === pa.id)
+      const bodyB = bodies.find((b) => b.id === pb.id)
+      if (!bodyA || !bodyB) continue
+
+      const [survivorBody, absorbedBody] = pickSurvivor(bodyA, bodyB)
+      const survivorPlanet = survivorBody.id === pa.id ? pa : pb
+      const absorbedPlanet = absorbedBody.id === pa.id ? pa : pb
+
+      const contact = new THREE.Vector3().lerpVectors(
+        survivorPlanet.id === pa.id ? _worldA : _worldB,
+        absorbedPlanet.id === pa.id ? _worldA : _worldB,
+        0.5,
+      )
+      worldToMeshLocal(contact, survivorPlanet.mesh, _local)
+      if (_local.lengthSq() < 1e-8) _local.set(0, 1, 0)
+      else _local.normalize().multiplyScalar(survivorPlanet.meanRadius * 0.95)
+
+      const absWorld = new THREE.Vector3()
+      const surWorld = new THREE.Vector3()
+      absorbedPlanet.holder.getWorldPosition(absWorld)
+      survivorPlanet.holder.getWorldPosition(surWorld)
+      _dir.copy(surWorld).sub(absWorld)
+      if (_dir.lengthSq() < 1e-8) _dir.set(1, 0, 0)
+      else _dir.normalize()
+      const inv = new THREE.Matrix4().copy(survivorPlanet.mesh.matrixWorld).invert()
+      _dir.transformDirection(inv).normalize()
+
+      return {
+        survivorId: survivorBody.id,
+        absorbedId: absorbedBody.id,
+        localPoint: [_local.x, _local.y, _local.z],
+        direction: [_dir.x, _dir.y, _dir.z],
+        color: colorForAbsorbed(absorbedBody, history ?? []),
+        phase: survivorPlanet.phase,
+        nodeAngle: survivorPlanet.nodeAngle,
+        orbit: { ...survivorBody.orbit },
+      }
+    }
+  }
+
+  return null
 }
 
 export function setSolarAtmosphereState(

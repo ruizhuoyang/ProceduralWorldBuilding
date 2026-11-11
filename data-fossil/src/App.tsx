@@ -3,7 +3,7 @@ import Controls from './components/Controls'
 import FirebaseControls from './components/FirebaseControls'
 import FossilCanvas, { type FossilCanvasHandle } from './components/FossilCanvas'
 import HistoryTray from './components/HistoryTray'
-import OrbitPalette from './components/OrbitPalette'
+import OrbitPalette, { type EncounterPreviewState } from './components/OrbitPalette'
 import ViewportToolbar from './components/ViewportToolbar'
 import { sanitizeDigits } from './lib/hashDigits'
 import {
@@ -41,6 +41,12 @@ import {
   type OrbitSystemSettings,
   type PlanetOrbit,
 } from './lib/orbit'
+import {
+  createSystemBodyFromEntry,
+  mergeSystemBodies,
+  type BodyCollision,
+  type SystemBody,
+} from './lib/systemBodies'
 import './App.css'
 
 export default function App() {
@@ -70,6 +76,9 @@ export default function App() {
   const [orbitSystem, setOrbitSystem] = useState(false)
   const [interiorView, setInteriorView] = useState(false)
   const [surfaceView, setSurfaceView] = useState(false)
+  const [systemBodies, setSystemBodies] = useState<SystemBody[]>([])
+  const [selectedBodyId, setSelectedBodyId] = useState<string | null>(null)
+  const [encounterPreview, setEncounterPreview] = useState<EncounterPreviewState>(null)
   const [orbitSettings, setOrbitSettings] = useState<OrbitSystemSettings>(DEFAULT_ORBIT_SYSTEM)
   const [seed, setSeed] = useState(0)
   const [revision, setRevision] = useState(0)
@@ -77,6 +86,9 @@ export default function App() {
 
   const isEdit = viewportMode === 'edit'
   const isView = viewportMode === 'view'
+
+  const selectedBody =
+    systemBodies.find((body) => body.id === selectedBodyId) ?? systemBodies[systemBodies.length - 1] ?? null
 
   const setMode = (mode: ViewportMode) => {
     setViewportMode(mode)
@@ -91,6 +103,16 @@ export default function App() {
     setHistory(loadHistory())
     setOrbitSettings(loadOrbitSystem())
   }, [])
+
+  useEffect(() => {
+    if (systemBodies.length === 0) {
+      setSelectedBodyId(null)
+      return
+    }
+    if (!selectedBodyId || !systemBodies.some((body) => body.id === selectedBodyId)) {
+      setSelectedBodyId(systemBodies[systemBodies.length - 1]!.id)
+    }
+  }, [systemBodies, selectedBodyId])
 
   const bumpRevision = useCallback(() => {
     setRevision((r) => r + 1)
@@ -231,6 +253,34 @@ export default function App() {
     bumpRevision()
   }
 
+  const handleAddToSystem = (entry: FossilHistoryEntry) => {
+    const livePhases = canvasRef.current?.getSolarPhases() ?? {}
+    setSystemBodies((prev) => {
+      const synced = prev.map((body) =>
+        typeof livePhases[body.id] === 'number' ? { ...body, phase: livePhases[body.id]! } : body,
+      )
+      const body = createSystemBodyFromEntry(entry, synced, orbitSettings)
+      setSelectedBodyId(body.id)
+      return [...synced, body]
+    })
+    if (!orbitSystem) {
+      setInteriorView(false)
+      setSurfaceView(false)
+      setOrbitSystem(true)
+    }
+  }
+
+  const handleBodiesCollide = useCallback((collision: BodyCollision) => {
+    setSystemBodies((prev) => {
+      const survivor = prev.find((body) => body.id === collision.survivorId)
+      const absorbed = prev.find((body) => body.id === collision.absorbedId)
+      if (!survivor || !absorbed) return prev
+      const merged = mergeSystemBodies(survivor, absorbed, collision)
+      setSelectedBodyId(merged.id)
+      return prev.filter((body) => body.id !== survivor.id && body.id !== absorbed.id).concat(merged)
+    })
+  }, [])
+
   const handleOrbitSettings = (patch: Partial<OrbitSystemSettings>) => {
     setOrbitSettings((prev) => {
       const next = normalizeOrbitSystem({ ...prev, ...patch })
@@ -240,16 +290,51 @@ export default function App() {
   }
 
   const handlePlanetOrbit = (id: string, patch: Partial<PlanetOrbit>) => {
-    setHistory((prev) => {
-      const next = prev.map((entry) =>
-        entry.id === id
-          ? { ...entry, orbit: normalizePlanetOrbit({ ...entry.orbit, ...patch }, entry.digits) }
-          : entry,
-      )
-      saveHistory(next)
-      return next
-    })
+    setSystemBodies((prev) =>
+      prev.map((body) =>
+        body.id === id
+          ? {
+              ...body,
+              orbit: normalizePlanetOrbit({ ...body.orbit, ...patch }, body.planet.digits),
+            }
+          : body,
+      ),
+    )
   }
+
+  const handleApplyEncounter = useCallback(
+    (moverId: string, patch: { orbit: PlanetOrbit; phase: number; nodeAngle: number }) => {
+      const livePhases = canvasRef.current?.getSolarPhases() ?? {}
+      setSystemBodies((prev) =>
+        prev.map((body) => {
+          const phase =
+            typeof livePhases[body.id] === 'number' ? livePhases[body.id]! : body.phase
+          if (body.id !== moverId) return { ...body, phase }
+          return {
+            ...body,
+            phase: patch.phase,
+            nodeAngle: patch.nodeAngle,
+            orbit: normalizePlanetOrbit(patch.orbit, body.planet.digits),
+          }
+        }),
+      )
+    },
+    [],
+  )
+
+  const handleEncounterPreviewChange = useCallback((preview: EncounterPreviewState) => {
+    setEncounterPreview((prev) => {
+      if (!preview) return prev === null ? prev : null
+      if (
+        prev &&
+        prev.targetId === preview.targetId &&
+        Math.abs(prev.meetPhase - preview.meetPhase) < 1e-5
+      ) {
+        return prev
+      }
+      return preview
+    })
+  }, [])
 
   const handleLoadCloudLibrary = (payload: {
     entries: FossilHistoryEntry[]
@@ -264,7 +349,9 @@ export default function App() {
     }
   }
 
-  const showOrbitPalette = isView && orbitSystem && history.length > 0
+  const showOrbitPalette = isView && orbitSystem
+  const canOpenOrbit = history.length > 0 || systemBodies.length > 0 || orbitSystem
+  const canViewSystemSurface = systemBodies.length > 0
 
   return (
     <div className={`app ${isEdit ? 'app--edit' : 'app--view'}${showOrbitPalette ? ' app--orbit' : ''}`}>
@@ -325,9 +412,13 @@ export default function App() {
           orbitSystem={orbitSystem && isView}
           interiorView={interiorView && isView}
           surfaceView={surfaceView && isView}
+          systemBodies={systemBodies}
+          surfaceBody={surfaceView ? selectedBody : null}
           historyEntries={history}
           orbitSettings={orbitSettings}
+          encounterPreview={orbitSystem ? encounterPreview : null}
           onSeedChange={setSeed}
+          onBodiesCollide={handleBodiesCollide}
         />
 
         {isView && (
@@ -373,16 +464,21 @@ export default function App() {
               aria-pressed={surfaceView}
               title={
                 surfaceView
-                  ? 'Exit surface panorama'
-                  : 'Surface panorama — WASD move, drag to look'
+                  ? orbitSystem || systemBodies.length > 0
+                    ? 'Back to stellar system'
+                    : 'Exit surface panorama'
+                  : canViewSystemSurface
+                    ? 'Surface panorama of the selected system planet'
+                    : 'Surface panorama — WASD move, drag to look'
               }
               onClick={() => {
                 if (surfaceView) {
                   setSurfaceView(false)
+                  if (systemBodies.length > 0) setOrbitSystem(true)
                   return
                 }
-                setOrbitSystem(false)
                 setInteriorView(false)
+                setOrbitSystem(false)
                 setSurfaceView(true)
               }}
             >
@@ -410,13 +506,13 @@ export default function App() {
               className={`app__orbit-btn ${orbitSystem ? 'app__orbit-btn--on' : ''}`}
               aria-pressed={orbitSystem}
               title={
-                history.length === 0
+                !canOpenOrbit
                   ? 'Save fossils in Edit first'
                   : orbitSystem
                     ? 'Exit stellar system'
-                    : 'Stellar system — saved fossils as planets'
+                    : 'Stellar system — add fossils from the tray; orbits can collide and merge'
               }
-              disabled={history.length === 0 && !orbitSystem}
+              disabled={!canOpenOrbit && !orbitSystem}
               onClick={() => {
                 if (orbitSystem) {
                   setOrbitSystem(false)
@@ -455,8 +551,14 @@ export default function App() {
             </button>
           </div>
         )}
-        {!orbitSystem && (
-          <HistoryTray entries={history} onSelect={handleSelectHistory} onDelete={handleDeleteHistory} />
+        {!interiorView && !surfaceView && (
+          <HistoryTray
+            entries={history}
+            onSelect={orbitSystem ? handleAddToSystem : handleSelectHistory}
+            onDelete={handleDeleteHistory}
+            formationMode={orbitSystem}
+            selectedId={null}
+          />
         )}
       </main>
 
@@ -506,8 +608,18 @@ export default function App() {
         <OrbitPalette
           settings={orbitSettings}
           onSettingsChange={handleOrbitSettings}
-          entries={history}
+          bodies={systemBodies}
+          selectedId={selectedBodyId}
+          onSelectBody={setSelectedBodyId}
           onOrbitChange={handlePlanetOrbit}
+          onApplyEncounter={handleApplyEncounter}
+          encounterPreview={encounterPreview}
+          onEncounterPreviewChange={handleEncounterPreviewChange}
+          historyEntries={history}
+          onClearSystem={() => {
+            setSystemBodies([])
+            setEncounterPreview(null)
+          }}
         />
       ) : null}
     </div>

@@ -159,6 +159,112 @@ assert(normalizePlanetOrbit({}, '12').pace === 1, 'legacy pace defaults to 1')
 assert(normalizePlanetOrbit({ tilt: -0.4 }, '12').tilt === -0.4, 'negative tilt is kept')
 assert(normalizePlanetOrbit({ size: 0.9 }, '12').size === 0.9, 'orbit size accepts 0–1')
 
+const {
+  buildFormedPlanetGeometry,
+  planetGrowth,
+  planetRoundness,
+} = await load('planetFormation.ts')
+const {
+  bodyCollisionRadius,
+  createSystemBodyFromEntry,
+  demoInsertionOrbit,
+  mergeSystemBodies,
+} = await load('systemBodies.ts')
+assert(planetGrowth(2) > planetGrowth(0), 'accretion grows mean radius scale')
+assert(planetRoundness(3) > planetRoundness(1), 'more impacts round the silhouette')
+const seedPlanet = {
+  baseId: 'a',
+  digits: '1208',
+  seed: hashDigits('1208'),
+  params: { ...DEFAULT_FOSSIL_PARAMS, digits: '1208' },
+  lighting: { key: 1.1 },
+  atmosphere: { ...DEFAULT_ATMOSPHERE },
+  scars: [],
+}
+const g0 = buildFormedPlanetGeometry(seedPlanet)
+const scarA = {
+  fossilId: 'b',
+  color: '#c49a5a',
+  localPoint: [0.9, 0.2, 0.1],
+  direction: [-1, 0, 0],
+}
+const scarB = {
+  ...scarA,
+  localPoint: [-0.2, 0.9, 0.1],
+  direction: [0, -1, 0],
+}
+const g1 = buildFormedPlanetGeometry({ ...seedPlanet, scars: [scarA] })
+const g2 = buildFormedPlanetGeometry({ ...seedPlanet, scars: [scarB] })
+assert(!geometryPositionsEqual(g0.geometry, g1.geometry), 'first impact changes planet mesh')
+assert(!geometryPositionsEqual(g1.geometry, g2.geometry), 'impact site moves with scar local point')
+assert(g1.meanRadius > g0.meanRadius * 0.98, 'impact keeps / grows planet bulk')
+g0.geometry.dispose()
+g1.geometry.dispose()
+g2.geometry.dispose()
+
+const fakeEntry = {
+  id: 'e1',
+  digits: '1208',
+  seed: hashDigits('1208'),
+  thumb: '',
+  createdAt: 1,
+  params: {
+    noiseStrength: DEFAULT_FOSSIL_PARAMS.noiseStrength,
+    noiseScale: DEFAULT_FOSSIL_PARAMS.noiseScale,
+    digitStrength: DEFAULT_FOSSIL_PARAMS.digitStrength,
+    stoneColors: DEFAULT_FOSSIL_PARAMS.stoneColors,
+    colorAlts: DEFAULT_FOSSIL_PARAMS.colorAlts,
+    normalStrength: DEFAULT_FOSSIL_PARAMS.normalStrength,
+    heightBlend: DEFAULT_FOSSIL_PARAMS.heightBlend,
+    detail: DEFAULT_FOSSIL_PARAMS.detail,
+    fbmOctaves: DEFAULT_FOSSIL_PARAMS.fbmOctaves,
+    landformLayers: DEFAULT_FOSSIL_PARAMS.landformLayers,
+  },
+  lighting: { key: 1.1 },
+  atmosphere: { ...DEFAULT_ATMOSPHERE },
+  orbit: normalizePlanetOrbit({}, '1208'),
+}
+const body0 = createSystemBodyFromEntry(fakeEntry, [], { shape: 'circle', spread: 0.38, playing: true })
+const insert = demoInsertionOrbit([body0], { ...fakeEntry, id: 'e2', digits: '0612' }, {
+  shape: 'circle',
+  spread: 0.38,
+  playing: true,
+})
+assert(insert.orbit.distance == null, 'later insert uses auto-distance track')
+assert(insert.orbit.pace === 1, 'later insert keeps normal pace until encounter')
+assert(bodyCollisionRadius(body0) > 0.05, 'collision radius is positive')
+const body1 = createSystemBodyFromEntry({ ...fakeEntry, id: 'e2', digits: '0612' }, [body0], {
+  shape: 'circle',
+  spread: 0.38,
+  playing: true,
+})
+const { computeEncounterOrbit, forwardDelta } = await load('encounterOrbit.ts')
+const encounter = computeEncounterOrbit(body1, body0, 0.4, { shape: 'circle', spread: 0.38, playing: true }, 0)
+assert(encounter.orbit.distance === body0.orbit.distance, 'encounter shares target distance')
+assert(encounter.orbit.pace > body0.orbit.pace, 'encounter speeds the mover')
+assert(encounter.etaSeconds > 1 && encounter.etaSeconds < 40, 'encounter ETA is a short wait')
+assert(forwardDelta(0, Math.PI) > 3, 'forward delta wraps correctly')
+const merged = mergeSystemBodies(body0, body1, {
+  localPoint: [0.8, 0.2, 0.1],
+  direction: [-1, 0, 0],
+  color: '#e07a2f',
+  phase: body0.phase,
+  nodeAngle: body0.nodeAngle,
+  orbit: body0.orbit,
+})
+assert(merged.planet.scars.length === 1, 'merge records one new scar')
+assert(merged.planet.scars[0].color === '#e07a2f', 'merge stores absorbed fossil color on scar')
+assert((merged.planet.scars[0].radius ?? 0) >= 0.8, 'scar radius is large enough to read from orbit')
+assert(merged.sourceEntryIds.length === 2, 'merge keeps both fossil sources')
+assert(merged.phase === body0.phase, 'merge keeps contact-site phase')
+assert(merged.label === body0.label, 'merge keeps survivor display name')
+assert(/^Planet \d+$/.test(body0.label), 'new body uses Planet N name')
+const { pickScarColor, defaultScarRadius } = await load('planetFormation.ts')
+assert(pickScarColor(['#9a9a9a', '#e07a2f']) === '#e07a2f', 'scar color picks the vivid swatch')
+assert(defaultScarRadius(0) >= 0.5, 'default scar radius is orbit-visible')
+const { ACCRETION_DURATION } = await load('accretionAnim.ts')
+assert(ACCRETION_DURATION >= 1 && ACCRETION_DURATION <= 2.5, 'accretion lasts about 1–2 seconds')
+
 await server.close()
 
 if (failed > 0) {
