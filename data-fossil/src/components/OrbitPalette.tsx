@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { FossilHistoryEntry } from '../lib/history'
 import {
   ORBIT_DISTANCE_MAX,
@@ -35,6 +35,9 @@ type OrbitPaletteProps = {
   historyEntries: FossilHistoryEntry[]
   onClearSystem: () => void
   onRemoveBody: (id: string) => void
+  onRenameBody: (id: string, label: string) => void
+  collapsed: boolean
+  onToggleCollapse: () => void
 }
 
 export default function OrbitPalette({
@@ -51,8 +54,22 @@ export default function OrbitPalette({
   historyEntries,
   onClearSystem,
   onRemoveBody,
+  onRenameBody,
+  collapsed,
+  onToggleCollapse,
 }: OrbitPaletteProps) {
   const canCollide = bodies.length >= 2
+  // Inline rename: which body is being edited, and the draft text.
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [draftName, setDraftName] = useState('')
+  const startRename = (body: SystemBody) => {
+    setRenamingId(body.id)
+    setDraftName(body.label)
+  }
+  const commitRename = () => {
+    if (renamingId && draftName.trim()) onRenameBody(renamingId, draftName)
+    setRenamingId(null)
+  }
 
   const sourceLabels = (body: SystemBody) =>
     body.sourceEntryIds.map((id) => {
@@ -67,7 +84,7 @@ export default function OrbitPalette({
   }, [bodies, collideSelectMoverId])
 
   return (
-    <PaletteShell label="Orbit">
+    <PaletteShell label="Orbit" collapsed={collapsed} onToggleCollapse={onToggleCollapse}>
       <section className="controls__block">
         <span className="controls__label">Cosmos</span>
         <p className="controls__hint">
@@ -93,6 +110,14 @@ export default function OrbitPalette({
           onChange={(playing) => onSettingsChange({ playing })}
         >
           Motion
+        </SwitchRow>
+        <SwitchRow
+          id="orbit-lines"
+          tip="Show or hide the orbit rings."
+          checked={settings.showOrbits}
+          onChange={(showOrbits) => onSettingsChange({ showOrbits })}
+        >
+          Orbits
         </SwitchRow>
         <FieldLabel htmlFor="orbit-shape" tip="Circle around the star, or a Kepler ellipse.">
           Shape
@@ -151,19 +176,50 @@ export default function OrbitPalette({
                   }${isPickTarget ? ' layer-card--collide-target' : ''}`}
                 >
                   <div className="layer-card__header">
-                    <button
-                      type="button"
-                      className="layer-card__name"
-                      onClick={() => {
-                        if (picking && collideSelectMoverId && body.id !== collideSelectMoverId) {
-                          onConfirmCollideTarget(body.id)
-                          return
-                        }
-                        onSelectBody(body.id)
-                      }}
-                    >
-                      {body.label}
-                    </button>
+                    {renamingId === body.id ? (
+                      <input
+                        className="layer-card__name-input"
+                        aria-label={`Rename ${body.label}`}
+                        value={draftName}
+                        maxLength={32}
+                        autoFocus
+                        onFocus={(e) => e.currentTarget.select()}
+                        onChange={(e) => setDraftName(e.target.value)}
+                        onBlur={commitRename}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') commitRename()
+                          if (e.key === 'Escape') {
+                            e.stopPropagation()
+                            setRenamingId(null)
+                          }
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="layer-card__name"
+                        title={expanded && !picking ? 'Click to rename' : undefined}
+                        onClick={() => {
+                          if (picking && collideSelectMoverId && body.id !== collideSelectMoverId) {
+                            onConfirmCollideTarget(body.id)
+                            return
+                          }
+                          // First click opens the body; clicking its name again renames it.
+                          if (expanded) {
+                            startRename(body)
+                            return
+                          }
+                          onSelectBody(body.id)
+                        }}
+                      >
+                        {body.label}
+                        {expanded && !picking ? (
+                          <span className="layer-card__rename-hint" aria-hidden>
+                            ✎
+                          </span>
+                        ) : null}
+                      </button>
+                    )}
                     <div className="layer-card__actions">
                       <button
                         type="button"

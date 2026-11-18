@@ -124,7 +124,11 @@ export type FossilBuildResult = {
  * never from a previously deformed mesh (no cumulative warp).
  * Spherical UVs are written so stone albedo / normal maps wrap cleanly.
  */
-export function buildFossilGeometry(params: FossilParams): FossilBuildResult {
+export function buildFossilGeometry(
+  params: FossilParams,
+  /** Bypass the editor's resolution cap (surface walk needs a denser mesh). */
+  opts: { frequency?: number } = {},
+): FossilBuildResult {
   const seed = hashDigits(params.digits)
   const regions = buildDigitRegions(params.digits, params.digitStrength)
   const fbm = createFbm3D(seed, params.fbmOctaves)
@@ -133,7 +137,7 @@ export function buildFossilGeometry(params: FossilParams): FossilBuildResult {
   const grainAmp = params.normalStrength * 0.04
   const landformSites = buildLandformSites(seed, params.landformLayers)
 
-  const base = createIcosphereGeometry(normalizeMeshResolution(params.detail))
+  const base = createIcosphereGeometry(opts.frequency ?? normalizeMeshResolution(params.detail))
   const positions = base.attributes.position
   if (!positions) {
     throw new Error('Icosphere missing position attribute')

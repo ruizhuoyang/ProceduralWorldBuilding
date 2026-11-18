@@ -1,24 +1,37 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=IBM+Plex+Mono:wght@400;600&display=swap');
 
-/* Stone photo palette: cool grays + sparse ochre / orange-yellow */
+/* Deep-cosmos palette: near-black space, warm starlight text, orange-gold accents */
 :root {
-  --bg: #ecebe8;
-  --bg-stage: #e4e2de;
-  --panel: #d8d6d2;
-  --panel-deep: #ceccc7;
-  --border: #b8b5af;
-  --border-soft: #c9c6c0;
-  --text: #2c2b29;
-  --text-muted: #6a6762;
-  --text-faint: #8a867f;
-  --accent: #c49a5a;
-  --accent-hot: #d4a85c;
-  --accent-ink: #2a2418;
-  --focus: #c49a5a;
-  --mono: #3a3936;
+  color-scheme: dark;
+  --bg: #08080a;
+  --bg-stage: #040406;
+  --panel: #0e0d0c;
+  --panel-deep: #171513;
+  --border: #3a332a;
+  --border-soft: #272219;
+  --text: #ece4d6;
+  --text-muted: #a89d8c;
+  --text-faint: #716858;
+  --accent: #d99a4e;
+  --accent-hot: #eab06a;
+  --accent-ink: #1a1107;
+  --accent-soft: rgba(217, 154, 78, 0.16);
+  --focus: #d99a4e;
+  --mono: #d9d0c1;
+  /* Floating chrome over the starfield */
+  --glass: rgba(14, 13, 12, 0.66);
+  --glass-strong: rgba(16, 15, 13, 0.88);
+  --glass-border: rgba(217, 154, 78, 0.22);
+  --shadow: rgba(0, 0, 0, 0.55);
+  --danger: #c2654c;
+  /* Soft accent: selected / primary states without a solid gold block. */
+  --accent-fill: rgba(217, 154, 78, 0.16);
+  --accent-fill-hot: rgba(217, 154, 78, 0.26);
+  --accent-line: rgba(217, 154, 78, 0.55);
 }
 
 .app {
+  position: relative;
   display: grid;
   width: 100%;
   height: 100%;
@@ -32,9 +45,10 @@
   grid-template-columns: 1fr;
 }
 
+/* Side palettes float over the full-bleed stage as glass (see Controls.css). */
 .app--edit,
 .app--orbit {
-  grid-template-columns: 1fr minmax(280px, 320px);
+  grid-template-columns: 1fr;
 }
 
 .app__stage {
@@ -42,6 +56,22 @@
   min-width: 0;
   min-height: 0;
   background: var(--bg-stage);
+  container-type: inline-size;
+}
+
+/* Narrow stage (Edit / Orbit side panel open): stack the chrome under the title
+   instead of letting it run over "DATA FOSSIL". */
+@container (max-width: 860px) {
+  .app__stage .app__chrome-right {
+    top: 4.85rem;
+    left: 1.5rem;
+    right: auto;
+    flex-wrap: wrap;
+  }
+
+  .app__stage .firebase-controls__user {
+    display: none;
+  }
 }
 
 .app__brand {
@@ -64,6 +94,7 @@
   letter-spacing: 0.04em;
   line-height: 1.4;
   color: var(--text-muted);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7);
 }
 
 .app__chrome-right {
@@ -79,10 +110,10 @@
 .app__mode-switch {
   display: flex;
   gap: 0;
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
   border-radius: 2px;
   overflow: hidden;
-  background: rgba(236, 235, 232, 0.92);
+  background: var(--glass);
   backdrop-filter: blur(6px);
 }
 
@@ -101,16 +132,41 @@
 }
 
 .app__mode-btn + .app__mode-btn {
-  border-left: 1px solid var(--border-soft);
+  border-left: 1px solid var(--glass-border);
 }
 
 .app__mode-btn:hover {
   color: var(--text);
 }
 
-.app__mode-btn--active {
-  color: var(--accent-ink);
+.app__mode-btn--panel {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Small status dot: lit while the orbit palette is open. */
+.app__mode-btn--panel::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.app__mode-btn--panel-on {
+  color: var(--accent-hot);
+}
+
+.app__mode-btn--panel-on::before {
   background: var(--accent);
+  box-shadow: 0 0 6px rgba(217, 154, 78, 0.8);
+}
+
+.app__mode-btn--active {
+  color: var(--accent-hot);
+  background: var(--accent-fill-hot);
 }
 
 .app__memory-card {
@@ -118,12 +174,16 @@
   left: 1.35rem;
   bottom: 1.35rem;
   z-index: 7;
-  width: min(17rem, calc(100% - 6.5rem));
+  width: min(19.5rem, calc(100% - 6.5rem));
+  max-height: calc(100% - 9rem);
+  overflow-y: auto;
   padding: 0.85rem 1rem 0.95rem;
-  background: rgba(236, 235, 232, 0.94);
-  border: 1px solid var(--border);
+  background: var(--glass-strong);
+  border: 1px solid var(--glass-border);
+  border-left: 2px solid var(--accent);
   border-radius: 2px;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 30px var(--shadow);
   pointer-events: auto;
 }
 
@@ -164,6 +224,98 @@
   white-space: pre-wrap;
 }
 
+.app__memory-card-kicker {
+  margin: 0 0 0.35rem;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.app__memory-card-meta {
+  display: grid;
+  gap: 0.22rem;
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0 0;
+  border-top: 1px solid var(--glass-border);
+}
+
+.app__memory-card-row {
+  display: grid;
+  grid-template-columns: 3.6rem 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.app__memory-card-row dt {
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.app__memory-card-row dd {
+  margin: 0;
+  font-family: 'IBM Plex Mono', Consolas, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  color: var(--mono);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app__memory-card-journey {
+  position: relative;
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.7rem 0 0;
+  padding: 0.6rem 0 0 0.95rem;
+  list-style: none;
+  border-top: 1px solid var(--glass-border);
+}
+
+/* Thin timeline rail with a dot per step. */
+.app__memory-card-journey::before {
+  content: '';
+  position: absolute;
+  left: 0.22rem;
+  top: 0.95rem;
+  bottom: 0.35rem;
+  width: 1px;
+  background: linear-gradient(var(--accent), rgba(217, 154, 78, 0.15));
+}
+
+.app__memory-card-journey li {
+  position: relative;
+  display: grid;
+  gap: 0.05rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.app__memory-card-journey li::before {
+  content: '';
+  position: absolute;
+  left: -0.9rem;
+  top: 0.38rem;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(217, 154, 78, 0.7);
+}
+
+.app__memory-card-when {
+  font-family: 'IBM Plex Mono', Consolas, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
 .app__view-btns {
   position: absolute;
   right: 1.35rem;
@@ -181,8 +333,8 @@
   place-items: center;
   padding: 0;
   color: var(--text-muted);
-  background: rgba(236, 235, 232, 0.92);
-  border: 1px solid var(--border);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
   border-radius: 2px;
   backdrop-filter: blur(6px);
   cursor: pointer;
@@ -198,9 +350,9 @@
 }
 
 .app__orbit-btn--on {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--accent-hot);
+  background: var(--accent-fill-hot);
+  border-color: var(--accent-line);
 }
 
 .app__orbit-btn:disabled {
@@ -217,6 +369,7 @@
   text-transform: uppercase;
   color: var(--text);
   white-space: nowrap;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.6);
 }
 
 .app__title-home {
@@ -240,7 +393,7 @@
 
 .app__title-home:hover,
 .app__title-home:focus-visible {
-  color: var(--accent-ink);
+  color: var(--accent-hot);
 }
 
 .app__title-home:focus-visible {
@@ -249,11 +402,6 @@
 }
 
 @media (max-width: 800px) {
-  .app--edit,
-  .app--orbit {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(45vh, 1fr) auto;
-  }
 
   .app__chrome-right {
     top: 1rem;
@@ -281,9 +429,4 @@
     letter-spacing: 0.02em;
   }
 
-  .controls {
-    border-left: none;
-    border-top: 1px solid var(--border);
-    max-height: 55vh;
-  }
 }

@@ -20,6 +20,8 @@ export type OrbitSystemSettings = {
   shape: OrbitShape
   spread: number
   playing: boolean
+  /** Draw the orbit rings in the stellar system. */
+  showOrbits: boolean
 }
 
 export const ORBIT_SHAPES: { value: OrbitShape; label: string }[] = [
@@ -45,6 +47,7 @@ export const DEFAULT_ORBIT_SYSTEM: OrbitSystemSettings = {
   shape: 'circle',
   spread: 0.38,
   playing: true,
+  showOrbits: true,
 }
 
 const SYS_KEY = 'data-fossil-orbit-sys-v1'
@@ -118,6 +121,7 @@ export function normalizeOrbitSystem(raw: unknown): OrbitSystemSettings {
       ORBIT_SPREAD_MAX,
     ),
     playing: src.playing !== false,
+    showOrbits: src.showOrbits !== false,
   }
 }
 

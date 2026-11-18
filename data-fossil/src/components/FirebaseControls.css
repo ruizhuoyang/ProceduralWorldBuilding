@@ -14,8 +14,8 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--text);
-  background: rgba(236, 235, 232, 0.92);
-  border: 1px solid var(--border);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
   border-radius: 2px;
   cursor: pointer;
   backdrop-filter: blur(6px);
@@ -23,7 +23,7 @@
 
 .firebase-controls button:hover:not(:disabled) {
   border-color: var(--accent);
-  color: var(--accent-ink);
+  color: var(--accent-hot);
 }
 
 .firebase-controls button:disabled {

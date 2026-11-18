@@ -30,6 +30,26 @@ export const FORMED_PLANET_ID = 'formed-planet'
 
 export type PlanetScarKind = 'native' | 'impact'
 
+/** What happened at a landmark — shown in the surface memory card and inscribed on the ground. */
+export type ScarRecord = {
+  /** When the landmark formed (native: planet placed; impact: collision), ms epoch. */
+  at: number
+  /** Planet that carries this mark at the time it formed. */
+  hostLabel?: string
+  /** Incoming planet that struck (impact only). */
+  absorbedLabel?: string
+  /** When the incoming planet first joined the system (impact only). */
+  absorbedJoinedAt?: number
+  /** Older imprints the incoming planet was already carrying (impact only). */
+  carried?: number
+  /** Order of this imprint on the host (1 = first impact). */
+  generation?: number
+  /** Angle between flight path and the local vertical, degrees (impact only). */
+  impactAngleDeg?: number
+  /** Relative speed at contact, scene units / s (impact only). */
+  impactSpeed?: number
+}
+
 export type PlanetScar = {
   fossilId: string
   /** Primary incoming stone color — kept on the finished planet as a rock stain. */
@@ -53,6 +73,8 @@ export type PlanetScar = {
   imprintProfile?: number[]
   /** Seed from the absorbed fossil — drives imprint surface grain. */
   imprintSeed?: number
+  /** History of this landmark (legacy scars omit it). */
+  record?: ScarRecord
 }
 
 export type SurfaceMemoryInfo = {
@@ -63,6 +85,27 @@ export type SurfaceMemoryInfo = {
   color: string
   localPoint: [number, number, number]
   radius: number
+  record?: ScarRecord
+  /** Angular radius of the impact crater (0 for native veins). */
+  craterRadius: number
+}
+
+/** Planet-local point → latitude / longitude in degrees (+Y is north). */
+export function scarLatLon(localPoint: [number, number, number]): { lat: number; lon: number } {
+  const v = new THREE.Vector3(...localPoint)
+  if (v.lengthSq() < 1e-10) return { lat: 0, lon: 0 }
+  v.normalize()
+  return {
+    lat: THREE.MathUtils.radToDeg(Math.asin(clamp(v.y, -1, 1))),
+    lon: THREE.MathUtils.radToDeg(Math.atan2(v.z, v.x)),
+  }
+}
+
+export function formatLatLon(localPoint: [number, number, number]): string {
+  const { lat, lon } = scarLatLon(localPoint)
+  const la = `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? 'N' : 'S'}`
+  const lo = `${Math.abs(lon).toFixed(2)}°${lon >= 0 ? 'E' : 'W'}`
+  return `${la}  ${lo}`
 }
 
 /** Default stain size so the patch reads clearly from the stellar camera. */
@@ -129,6 +172,7 @@ export function createNativeLandmark(entry: FossilHistoryEntry): PlanetScar {
     memoryNote: normalizeMemoryNote(entry.memoryNote),
     imprintProfile: defaultCircularProfile(),
     imprintSeed: entry.seed,
+    record: { at: Date.now() },
   }
 }
 
@@ -145,6 +189,8 @@ export function scarToMemoryInfo(scar: PlanetScar): SurfaceMemoryInfo {
     color: scar.color,
     localPoint: scar.localPoint,
     radius: scar.radius ?? (isImpactScar(scar) ? defaultScarRadius() : defaultNativeRadius()),
+    record: scar.record,
+    craterRadius: craterRadiusFor(scar),
   }
 }
 
@@ -334,13 +380,89 @@ function imprintDelta(
  * Rebuild the composite planet mesh from the base fossil + recorded scars.
  * Existing scars stay; each rebuild re-applies the full history.
  */
-export function buildFormedPlanetGeometry(planet: FormedPlanetState): FormedPlanetBuild {
-  const detail = Math.min(
-    normalizeMeshResolution(planet.params.detail),
-    MESH_RESOLUTION_PLANET_MAX + 8,
-  )
+/* ------------------------------------------------------------------ craters */
+
+function hashUnit(n: number): number {
+  const x = Math.sin(n * 91.345 + 47.853) * 43758.5453
+  return x - Math.floor(x)
+}
+
+/**
+ * Angular radius of the crater an impact leaves (radians on the unit sphere).
+ * Faster hits dig wider; each imprint varies a little by its seed.
+ */
+export function craterRadiusFor(scar: PlanetScar): number {
+  if (!isImpactScar(scar)) return 0
+  const speed = clamp(scar.record?.impactSpeed ?? 0.6, 0, 1.6)
+  const jitter = hashUnit(scar.imprintSeed ?? 7)
+  return 0.12 + speed * 0.04 + jitter * 0.03
+}
+
+type CraterFrame = {
+  n: THREE.Vector3
+  t: THREE.Vector3
+  b: THREE.Vector3
+  radius: number
+  phase: number
+  rays: number
+}
+
+function craterFrame(scar: PlanetScar): CraterFrame | null {
+  const radius = craterRadiusFor(scar)
+  if (radius <= 0) return null
+  const n = new THREE.Vector3(...scar.localPoint)
+  if (n.lengthSq() < 1e-10) n.set(...scar.direction).negate()
+  if (n.lengthSq() < 1e-10) return null
+  n.normalize()
+  const t = new THREE.Vector3(0, 1, 0).cross(n)
+  if (t.lengthSq() < 0.04) t.set(1, 0, 0).cross(n)
+  t.normalize()
+  const b = new THREE.Vector3().crossVectors(n, t).normalize()
+  const seed = scar.imprintSeed ?? 11
+  return { n, t, b, radius, phase: hashUnit(seed + 3) * Math.PI * 2, rays: 7 + Math.floor(hashUnit(seed + 5) * 5) }
+}
+
+/**
+ * Radial offset (in planet-radius units) of a simple impact crater at `dir`:
+ * parabolic bowl, raised irregular rim, rayed ejecta blanket, central peak on big ones.
+ */
+function craterDelta(dir: THREE.Vector3, c: CraterFrame): number {
+  const cosA = clamp(dir.dot(c.n), -1, 1)
+  if (cosA < Math.cos(c.radius * 3.2)) return 0
+  const a = Math.acos(cosA)
+  const x = a / c.radius
+  const theta = Math.atan2(dir.dot(c.b), dir.dot(c.t))
+  const depth = c.radius * 0.32
+  const rimH = depth * 0.38 * (1 + 0.22 * Math.sin(theta * 5 + c.phase) + 0.12 * Math.sin(theta * 11 - c.phase))
+  let h = 0
+  if (x < 1) h -= depth * (1 - x * x)
+  // Raised rim straddling the edge.
+  h += rimH * Math.exp(-(((x - 1) / 0.2) ** 2))
+  if (x > 1) {
+    // Ejecta blanket with radial rays, fading outward.
+    const rays = 0.55 + 0.45 * Math.max(0, Math.cos(theta * c.rays + c.phase * 2))
+    h += rimH * 0.35 * Math.exp(-(x - 1) / 0.55) * rays
+  }
+  if (c.radius > 0.15) h += depth * 0.32 * Math.exp(-((x / 0.17) ** 2))
+  return h
+}
+
+export type FormedPlanetBuildOptions = {
+  /** Override mesh frequency (surface walk uses a denser mesh). */
+  detail?: number
+  /** Carve impact craters into the terrain. */
+  craters?: boolean
+}
+
+export function buildFormedPlanetGeometry(
+  planet: FormedPlanetState,
+  options: FormedPlanetBuildOptions = {},
+): FormedPlanetBuild {
+  const detail =
+    options.detail ??
+    Math.min(normalizeMeshResolution(planet.params.detail), MESH_RESOLUTION_PLANET_MAX + 8)
   const baseParams: FossilParams = { ...planet.params, detail }
-  const built = buildFossilGeometry(baseParams)
+  const built = buildFossilGeometry(baseParams, { frequency: options.detail })
   const pos = built.geometry.getAttribute('position') as THREE.BufferAttribute
   const count = pos.count
   // Native veins are visual landmarks only — shape growth comes from real impacts.
@@ -366,6 +488,9 @@ export function buildFormedPlanetGeometry(planet: FormedPlanetState): FormedPlan
   const targetMean = meanR0 * growth
 
   const impactScars = planet.scars.filter(isImpactScar)
+  const craters = options.craters
+    ? impactScars.map(craterFrame).filter((c): c is CraterFrame => c !== null)
+    : []
 
   const out = new Float32Array(count * 3)
   let rMin = Number.POSITIVE_INFINITY
@@ -380,6 +505,9 @@ export function buildFormedPlanetGeometry(planet: FormedPlanetState): FormedPlan
     r = THREE.MathUtils.lerp(r, targetMean, roundness)
     for (let s = 0; s < impactScars.length; s++) {
       r += imprintDelta(dir, impactScars[s]!, s, targetMean)
+    }
+    for (let c = 0; c < craters.length; c++) {
+      r += craterDelta(dir, craters[c]!) * targetMean
     }
     r = Math.max(0.22, r)
     if (r < rMin) rMin = r

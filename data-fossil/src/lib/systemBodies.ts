@@ -43,6 +43,12 @@ export type BodyCollision = {
   phase: number
   nodeAngle: number
   orbit: PlanetOrbit
+  /** Wall-clock time of contact (ms epoch). */
+  at?: number
+  /** Angle between relative velocity and contact normal, degrees. */
+  impactAngleDeg?: number
+  /** Relative speed at contact, scene units / s. */
+  impactSpeed?: number
 }
 
 function clamp(n: number, lo: number, hi: number) {
@@ -182,6 +188,15 @@ export function mergeSystemBodies(
   const memory = memoryFromAbsorbed(absorbed)
   // Stamp the absorbed fossil's silhouette along the impact flight direction.
   const imprintProfile = extractImprintProfile(absorbed.planet.params, collision.direction)
+  // Angle of attack: flight direction vs. the local vertical at the contact point.
+  const nx = collision.localPoint[0]
+  const ny = collision.localPoint[1]
+  const nz = collision.localPoint[2]
+  const nl = Math.hypot(nx, ny, nz) || 1
+  const [dx, dy, dz] = collision.direction
+  const dl = Math.hypot(dx, dy, dz) || 1
+  const cosA = clamp(-(nx * dx + ny * dy + nz * dz) / (nl * dl), -1, 1)
+  const absorbedNative = absorbed.planet.scars.find((s) => s.kind === 'native')
   const scar: PlanetScar = {
     fossilId: absorbed.planet.baseId,
     color: collision.color,
@@ -193,6 +208,16 @@ export function mergeSystemBodies(
     memoryNote: memory.memoryNote,
     imprintProfile,
     imprintSeed: absorbed.planet.seed,
+    record: {
+      at: collision.at ?? Date.now(),
+      hostLabel: survivor.label,
+      absorbedLabel: absorbed.label,
+      absorbedJoinedAt: absorbedNative?.record?.at,
+      carried: absorbed.planet.scars.filter(isImpactScar).length,
+      generation: impactCount + 1,
+      impactAngleDeg: collision.impactAngleDeg ?? Math.round(THREE.MathUtils.radToDeg(Math.acos(cosA))),
+      impactSpeed: collision.impactSpeed,
+    },
   }
   // Keep survivor landmarks; carry absorbed impact history; bind absorbed memory to the new band.
   let planet = { ...survivor.planet, scars: [...survivor.planet.scars] }

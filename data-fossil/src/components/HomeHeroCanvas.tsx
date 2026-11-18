@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { buildFossilGeometry } from '../lib/buildFossilGeometry'
+import { createCosmosSpace } from '../lib/cosmosSpace'
 import { enableStoneNoiseMaterial, applyStoneNoiseParams } from '../lib/stoneNoiseMaterial'
 import { DEFAULT_FOSSIL_PARAMS, DEFAULT_LIGHTING } from '../lib/types'
 import './HomeHeroCanvas.css'
@@ -17,7 +18,8 @@ export default function HomeHeroCanvas() {
     if (!host) return
 
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0xe4e2de)
+    scene.background = null
+    const cosmos = createCosmosSpace()
 
     const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100)
     camera.position.copy(HOME_CAM)
@@ -28,6 +30,7 @@ export default function HomeHeroCanvas() {
     renderer.setSize(host.clientWidth, host.clientHeight)
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.05
+    renderer.autoClear = false
     host.appendChild(renderer.domElement)
 
     const k = DEFAULT_LIGHTING.key
@@ -37,7 +40,8 @@ export default function HomeHeroCanvas() {
     key.position.set(2.8, 4.2, 3)
     const fill = new THREE.DirectionalLight(0xc8c5bf, k * 0.16)
     fill.position.set(-3.2, 1.6, 2.4)
-    const rim = new THREE.DirectionalLight(0xcfcbc4, k * 0.05)
+    // Warm starlight rim so the silhouette separates from black space.
+    const rim = new THREE.DirectionalLight(0xffc98f, k * 0.45)
     rim.position.set(-1.6, 2.8, -3.4)
     scene.add(ambient, hemi, key, fill, rim)
 
@@ -74,6 +78,12 @@ export default function HomeHeroCanvas() {
       const h = host.clientHeight
       if (w <= 0 || h <= 0) return
       camera.aspect = w / h
+      // Wide layout: the canvas runs behind the copy column, so shift the stone right
+      // to sit centred in the open area.
+      const copy = host.closest('.home')?.querySelector('.home__copy') as HTMLElement | null
+      const shift = copy && window.innerWidth > 820 ? copy.getBoundingClientRect().width / 2 : 0
+      if (shift > 0) camera.setViewOffset(w, h, -shift, 0, w, h)
+      else camera.clearViewOffset()
       camera.updateProjectionMatrix()
       renderer.setSize(w, h)
     }
@@ -85,6 +95,9 @@ export default function HomeHeroCanvas() {
       frame = requestAnimationFrame(tick)
       const dt = clock.getDelta()
       rock.rotation.y += dt * SPIN
+      renderer.clear()
+      cosmos.render(renderer, camera)
+      renderer.clearDepth()
       renderer.render(scene, camera)
     }
     tick()
@@ -94,6 +107,7 @@ export default function HomeHeroCanvas() {
       ro.disconnect()
       geometry.dispose()
       material.dispose()
+      cosmos.dispose()
       renderer.dispose()
       if (renderer.domElement.parentNode === host) host.removeChild(renderer.domElement)
     }

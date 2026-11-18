@@ -165,6 +165,8 @@ export function startAccretionAnim(
       color: collision.color || '#c4b49a',
       impactDir: _impactDir,
       absorbTarget: _orbitA.clone(),
+      absorbObject: survivor.holder,
+      absorbRadius: survivor.collisionRadius,
     })
   }
 

@@ -1,5 +1,6 @@
 ﻿import { useEffect, useImperativeHandle, useRef, forwardRef } from 'react'
 import * as THREE from 'three'
+import { createCosmosSpace } from '../lib/cosmosSpace'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js'
 import { STLExporter } from 'three/addons/exporters/STLExporter.js'
@@ -47,6 +48,7 @@ import {
   FX_KIND,
   spawnImprintCascade,
   stepFxParticles,
+  syncAmbientMist,
   syncSurfaceDust,
   type FxParticleSystem,
 } from '../lib/fxParticles'
@@ -124,6 +126,10 @@ type SceneBag = {
   fill: THREE.DirectionalLight
   rim: THREE.DirectionalLight
   interiorLight: THREE.PointLight
+  /** Low-angle sun for the surface walk (crater relief + long shadows). */
+  surfaceSun: THREE.DirectionalLight
+  /** Planet-local direction toward that sun. */
+  surfaceSunDir: THREE.Vector3
   viewportMode: ViewportMode
   orbitSystem: boolean
   interiorView: boolean
@@ -202,6 +208,8 @@ const SURFACE_FOV = 100
 const SURFACE_EYE_HEIGHT = 0.036
 /** Near must stay well below eye height so looking down does not slice the mesh. */
 const SURFACE_NEAR = 0.0012
+/** Icosphere frequency for the surface walk — dense enough to carve craters into. */
+const SURFACE_MESH_DETAIL = 64
 /** ~50% of the previous 0.7 pace — slow approach to imprints; still dt-scaled. */
 const SURFACE_MOVE_SPEED = 0.34
 const SURFACE_LOOK_SENS = 0.0028
@@ -271,7 +279,7 @@ function buildWorldHelpers(group: THREE.Group) {
     })
   }
 
-  const grid = new THREE.GridHelper(6, 12, 0x9a9690, 0xc4c1bb)
+  const grid = new THREE.GridHelper(6, 12, 0x5a4a36, 0x2a251f)
   grid.position.y = -1.35
   group.add(grid)
 
@@ -309,7 +317,7 @@ function applyStudioLighting(bag: SceneBag, lighting: LightingParams) {
   bag.hemi.intensity = k * 0.58
   bag.key.intensity = k * 0.32
   bag.fill.intensity = k * 0.16
-  bag.rim.intensity = k * 0.05
+  bag.rim.intensity = k * 0.4
   bag.interiorLight.intensity = 0
   bag.renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE
 }
@@ -324,9 +332,42 @@ function applyInteriorLighting(bag: SceneBag) {
   bag.renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE
 }
 
+/** Surface walk: dim fill, one strong warm sun low on the horizon so relief casts shadow. */
+function applySurfaceLighting(bag: SceneBag, lighting: LightingParams) {
+  const k = lighting.key
+  bag.ambient.intensity = k * 0.34
+  bag.hemi.intensity = k * 0.28
+  bag.key.intensity = 0
+  bag.fill.intensity = k * 0.05
+  bag.rim.intensity = 0
+  bag.interiorLight.intensity = 0
+  bag.surfaceSun.intensity = k * 2.6
+  bag.surfaceSun.castShadow = true
+  bag.rock.castShadow = true
+  bag.rock.receiveShadow = true
+  bag.renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE
+}
+
 function applyLighting(bag: SceneBag, lighting: LightingParams) {
-  if (bag.interiorView) applyInteriorLighting(bag)
+  bag.surfaceSun.intensity = 0
+  bag.surfaceSun.castShadow = false
+  bag.rock.castShadow = false
+  bag.rock.receiveShadow = false
+  if (bag.surfaceView) applySurfaceLighting(bag, lighting)
+  else if (bag.interiorView) applyInteriorLighting(bag)
   else applyStudioLighting(bag, lighting)
+}
+
+const _sunFoot = new THREE.Vector3()
+
+/** Keep the sun's shadow box centred on the walker so shadows stay crisp nearby. */
+function updateSurfaceSun(bag: SceneBag) {
+  const fps = bag.surfaceFps
+  if (!fps || !bag.surfaceView || bag.surfaceSun.intensity <= 0) return
+  bag.rock.localToWorld(_sunFoot.copy(fps.foot))
+  bag.surfaceSun.target.position.copy(_sunFoot)
+  bag.surfaceSun.position.copy(_sunFoot).addScaledVector(bag.surfaceSunDir, 6)
+  bag.surfaceSun.target.updateMatrixWorld()
 }
 
 function syncAtmosphere(bag: SceneBag, wireframe: boolean) {
@@ -610,8 +651,13 @@ function leaveSurfaceCamera(bag: SceneBag) {
   if (bag.fx) {
     clearFxParticles(
       bag.fx,
-      (i) => bag.fx!.kind[i] === FX_KIND.DUST || bag.fx!.kind[i] === FX_KIND.IMPRINT,
+      (i) =>
+        bag.fx!.kind[i] === FX_KIND.DUST ||
+        bag.fx!.kind[i] === FX_KIND.IMPRINT ||
+        bag.fx!.kind[i] === FX_KIND.AMBIENT,
     )
+    bag.fx.ambientOn = false
+    bag.fx.ambientFade = 0
     bag.fx.dustScarKey = null
     bag.fx.dustFade = 0
     bag.fx.imprintPlaying = false
@@ -784,10 +830,12 @@ function noteSurfaceMemoryOpened(bag: SceneBag, memory: SurfaceMemoryInfo | null
   bag.surfaceGuide.pendingKey = scarGuideKey(memory)
 }
 
-function updateSurfaceDustFx(bag: SceneBag, body: SystemBody | null) {
+function updateSurfaceDustFx(bag: SceneBag, body: SystemBody | null, dt: number) {
   const fx = bag.fx
   const fps = bag.surfaceFps
   if (!fx || !fps || !bag.surfaceView) return
+  // Ambient nebula mist on every surface — with or without collision imprints.
+  syncAmbientMist(fx, { rock: bag.rock, camera: bag.camera, active: true, dt })
   const scar = currentGuideScar(bag, body)
   bag.rock.localToWorld(bag._fxFoot.copy(fps.foot))
   syncSurfaceDust(fx, {
@@ -1093,7 +1141,9 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     if (!container) return
 
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0xe4e2de)
+    // Space is drawn by a separate volumetric cosmos pass (see animate).
+    scene.background = null
+    const cosmos = createCosmosSpace()
 
     const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100)
     camera.position.copy(HOME.position)
@@ -1103,6 +1153,8 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     renderer.setSize(container.clientWidth, container.clientHeight)
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
     renderer.autoClear = false
     container.appendChild(renderer.domElement)
 
@@ -1125,10 +1177,25 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     key.position.set(2.8, 4.2, 3)
     const fill = new THREE.DirectionalLight(0xc8c5bf, k0 * 0.16)
     fill.position.set(-3.2, 1.6, 2.4)
-    const rim = new THREE.DirectionalLight(0xcfcbc4, k0 * 0.05)
+    // Warm starlight rim so silhouettes separate from black space.
+    const rim = new THREE.DirectionalLight(0xffc98f, k0 * 0.4)
     rim.position.set(-1.6, 2.8, -3.4)
     const interiorLight = new THREE.PointLight(0xf2eee8, 0, 4.2, 1.35)
     scene.add(ambient, hemi, key, fill, rim, interiorLight)
+    // Surface-walk sun: off until the surface view turns it on.
+    const surfaceSun = new THREE.DirectionalLight(0xffd8a6, 0)
+    surfaceSun.castShadow = false
+    surfaceSun.shadow.mapSize.set(2048, 2048)
+    surfaceSun.shadow.camera.left = -0.75
+    surfaceSun.shadow.camera.right = 0.75
+    surfaceSun.shadow.camera.top = 0.75
+    surfaceSun.shadow.camera.bottom = -0.75
+    surfaceSun.shadow.camera.near = 0.5
+    surfaceSun.shadow.camera.far = 12
+    surfaceSun.shadow.bias = -0.0004
+    surfaceSun.shadow.normalBias = 0.004
+    surfaceSun.shadow.radius = 3
+    scene.add(surfaceSun, surfaceSun.target)
 
     const material = new THREE.MeshStandardMaterial({
       color: 0xffffff,
@@ -1175,6 +1242,8 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       fill,
       rim,
       interiorLight,
+      surfaceSun,
+      surfaceSunDir: new THREE.Vector3(0.6, 0.3, 0.74).normalize(),
       viewportMode: viewportModeRef.current,
       orbitSystem: false,
       interiorView: false,
@@ -1225,7 +1294,11 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       const focus =
         bag.surfaceView || bag.interiorView ? surfaceBodyRef.current : null
       if (focus) {
-        const built = buildFormedPlanetGeometry(focus.planet)
+        // Surface walk gets a dense mesh with impact craters carved in; interior keeps the planet mesh.
+        const built = buildFormedPlanetGeometry(
+          focus.planet,
+          bag.surfaceView ? { detail: SURFACE_MESH_DETAIL, craters: true } : undefined,
+        )
         const prev = bag.rock.geometry
         bag.rock.geometry = built.geometry
         prev.dispose()
@@ -1246,6 +1319,15 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         bag.mappingGroup.visible = false
         if (bag.surfaceView) {
           const latest = focus.planet.scars[focus.planet.scars.length - 1]
+          // Sun ~18° above the horizon at the newest landmark: crater walls cast long shadows.
+          const n = latest ? new THREE.Vector3(...latest.localPoint) : new THREE.Vector3(0.35, 0.28, 0.9)
+          if (n.lengthSq() < 1e-8) n.set(0, 1, 0)
+          n.normalize()
+          const east = new THREE.Vector3(0, 1, 0).cross(n)
+          if (east.lengthSq() < 0.04) east.set(1, 0, 0).cross(n)
+          east.normalize()
+          const elev = THREE.MathUtils.degToRad(18)
+          bag.surfaceSunDir.copy(east).multiplyScalar(Math.cos(elev)).addScaledVector(n, Math.sin(elev)).normalize()
           const seek = latest
             ? new THREE.Vector3(...latest.localPoint)
             : null
@@ -1461,8 +1543,9 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         }
         if (bag.surfaceView) {
           stepSurfaceFps(bag, dt)
+          updateSurfaceSun(bag)
           updateSurfaceGuideArrow(bag, surfaceBodyRef.current)
-          updateSurfaceDustFx(bag, surfaceBodyRef.current)
+          updateSurfaceDustFx(bag, surfaceBodyRef.current, dt)
         }
         if (bag.atmosphere && bag.atmosphereOn && bag.atmospherePlaying) {
           stepAtmosphere(bag.atmosphere, dt, bag.rock.geometry)
@@ -1477,6 +1560,8 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       if (!bag.surfaceView) bag.controls.update()
 
       bag.renderer.clear()
+      cosmos.render(bag.renderer, bag.camera)
+      bag.renderer.clearDepth()
       bag.renderer.render(bag.scene, bag.camera)
       bag.labelRenderer.render(bag.scene, bag.camera)
 
@@ -1628,6 +1713,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
         bag.accretion = null
       }
       disposeFxParticleSystem(bag.fx)
+      cosmos.dispose()
       bag.fx = null
       clearSolar(bag)
       disposeStudioAtmosphere(bag)

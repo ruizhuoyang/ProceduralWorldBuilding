@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { createGrainStar, type GrainStar } from './grainStar'
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js'
 import {
   createAtmosphere,
@@ -51,6 +52,8 @@ export type PlanetBody = {
 export type SolarSystem = {
   root: THREE.Group
   star: THREE.Mesh
+  /** Grainy particle body drawn around the small hot core. */
+  grain: GrainStar
   starLight: THREE.PointLight
   planets: PlanetBody[]
 }
@@ -79,7 +82,7 @@ function orbitPoints(semiMajor: number, ecc: number): THREE.Vector3[] {
 function makeOrbitLine(semiMajor: number, ecc: number): THREE.Line {
   const geo = new THREE.BufferGeometry().setFromPoints(orbitPoints(semiMajor, ecc))
   const mat = new THREE.LineBasicMaterial({
-    color: 0x9a9690,
+    color: 0xc9a77a,
     transparent: true,
     opacity: 0.45,
   })
@@ -90,6 +93,20 @@ function setOrbitLine(line: THREE.Line, semiMajor: number, ecc: number) {
   const prev = line.geometry
   line.geometry = new THREE.BufferGeometry().setFromPoints(orbitPoints(semiMajor, ecc))
   prev.dispose()
+}
+
+const _m3 = new THREE.Matrix3()
+
+/** World-space orbital velocity of a planet (finite difference along its orbit). */
+function planetVelocityWorld(planet: PlanetBody, out: THREE.Vector3) {
+  const eps = 1e-3
+  const p0 = planet.phase
+  const r0 = orbitRadiusAt(planet.semiMajor, planet.eccentricity, p0)
+  const r1 = orbitRadiusAt(planet.semiMajor, planet.eccentricity, p0 + eps)
+  out
+    .set(Math.cos(p0 + eps) * r1 - Math.cos(p0) * r0, 0, Math.sin(p0 + eps) * r1 - Math.sin(p0) * r0)
+    .multiplyScalar(planet.orbitSpeed / eps)
+  return out.applyMatrix3(_m3.setFromMatrix4(planet.pivot.matrixWorld))
 }
 
 function placePlanet(planet: PlanetBody) {
@@ -190,8 +207,18 @@ export function syncSolarOrbits(
     planet.collisionRadius = bodyCollisionRadius(body, planet.meanRadius)
     if (planet.atmosphere) setAtmosphereSizeMul(planet.atmosphere, solarAtmosphereSizeMul(scale))
     const label = planet.holder.children.find((child) => child instanceof CSS2DObject)
-    if (label) label.position.set(0, scale * 1.35, 0)
+    if (label) {
+      label.position.set(0, scale * 1.35, 0)
+      // Keep the scene label in step with renames (chase suffix "→ …" is preserved).
+      const el = (label as CSS2DObject).element
+      if (el.dataset.baseLabel !== body.label) {
+        const suffix = (el.textContent ?? '').match(/\s*→.*$/)?.[0] ?? ''
+        el.dataset.baseLabel = body.label
+        el.textContent = body.label + suffix
+      }
+    }
     setOrbitLine(planet.orbitLine, semiMajor, eccentricity)
+    planet.orbitLine.visible = settings.showOrbits
     placePlanet(planet)
   }
 }
@@ -283,16 +310,13 @@ export function createSolarSystem(
   const root = new THREE.Group()
   root.name = 'solarSystem'
 
-  const starGeo = new THREE.SphereGeometry(0.55, 32, 24)
-  const starMat = new THREE.MeshStandardMaterial({
-    color: 0xffe2a8,
-    emissive: 0xc49a5a,
-    emissiveIntensity: 1.15,
-    roughness: 0.45,
-    metalness: 0.05,
-  })
+  // Small white-hot core; the visible body is a grainy particle star around it.
+  const starGeo = new THREE.SphereGeometry(0.16, 24, 16)
+  const starMat = new THREE.MeshBasicMaterial({ color: 0xfff1d6, toneMapped: false })
   const star = new THREE.Mesh(starGeo, starMat)
   root.add(star)
+  const grain = createGrainStar(0.55)
+  root.add(grain.points)
 
   const starLight = new THREE.PointLight(0xffd9a0, 2.2, 40, 1.6)
   starLight.position.set(0, 0.2, 0)
@@ -301,7 +325,7 @@ export function createSolarSystem(
   const planets: PlanetBody[] = []
   bodies.forEach((body, index) => addPlanetBody(root, planets, body, index))
 
-  const system = { root, star, starLight, planets }
+  const system = { root, star, grain, starLight, planets }
   syncSolarOrbits(system, bodies, settings)
   return system
 }
@@ -323,6 +347,7 @@ export function disposeSolarSystem(system: SolarSystem | null | undefined) {
     })
   }
   system.star.geometry.dispose()
+  system.grain.dispose()
   ;(system.star.material as THREE.Material).dispose()
   if (system.root.parent) system.root.parent.remove(system.root)
   system.root.clear()
@@ -420,15 +445,28 @@ export function tickSolarSystem(
       const inv = new THREE.Matrix4().copy(survivorPlanet.mesh.matrixWorld).invert()
       _dir.transformDirection(inv).normalize()
 
+      // Angle of attack from the relative orbital velocity vs. the contact normal.
+      const vSur = planetVelocityWorld(survivorPlanet, new THREE.Vector3())
+      const vRel = planetVelocityWorld(absorbedPlanet, new THREE.Vector3()).sub(vSur)
+      const normal = absWorld.clone().sub(surWorld).normalize()
+      const speed = vRel.length()
+      const impactAngleDeg =
+        speed > 1e-5
+          ? Math.round(THREE.MathUtils.radToDeg(Math.acos(Math.min(1, Math.abs(vRel.dot(normal)) / speed))))
+          : undefined
+
       return {
         survivorId: survivorBody.id,
         absorbedId: absorbedBody.id,
+        impactAngleDeg,
+        impactSpeed: Math.round(speed * 100) / 100,
         localPoint: [_local.x, _local.y, _local.z],
         direction: [_dir.x, _dir.y, _dir.z],
         color: colorForAbsorbed(absorbedBody, history ?? []),
         phase: survivorPlanet.phase,
         nodeAngle: survivorPlanet.nodeAngle,
         orbit: { ...survivorBody.orbit },
+        at: Date.now(),
       }
     }
   }

@@ -5,6 +5,7 @@ import FossilCanvas, { type FossilCanvasHandle } from './components/FossilCanvas
 import HistoryTray from './components/HistoryTray'
 import HomePage from './components/HomePage'
 import OrbitPalette from './components/OrbitPalette'
+import MemoryCard from './components/MemoryCard'
 import ViewportToolbar from './components/ViewportToolbar'
 import { sanitizeDigits } from './lib/hashDigits'
 import {
@@ -93,6 +94,8 @@ export default function App() {
     null,
   )
   const [orbitSettings, setOrbitSettings] = useState<OrbitSystemSettings>(DEFAULT_ORBIT_SYSTEM)
+  // Stellar-system palette can fold away to leave the scene clear.
+  const [orbitPaletteCollapsed, setOrbitPaletteCollapsed] = useState(false)
   const [seed, setSeed] = useState(0)
   const [revision, setRevision] = useState(0)
   const [history, setHistory] = useState<FossilHistoryEntry[]>([])
@@ -325,6 +328,12 @@ export default function App() {
     )
   }
 
+  const handleRenameBody = (id: string, label: string) => {
+    const name = label.trim().slice(0, 32)
+    if (!name) return
+    setSystemBodies((prev) => prev.map((body) => (body.id === id ? { ...body, label: name } : body)))
+  }
+
   const handleCancelCollideSelect = useCallback(() => {
     setCollideSelectMoverId(null)
   }, [])
@@ -482,6 +491,19 @@ export default function App() {
             >
               Edit
             </button>
+            {showOrbitPalette ? (
+              <button
+                type="button"
+                className={`app__mode-btn app__mode-btn--panel${
+                  orbitPaletteCollapsed ? '' : ' app__mode-btn--panel-on'
+                }`}
+                aria-pressed={!orbitPaletteCollapsed}
+                title={orbitPaletteCollapsed ? 'Show orbit palette' : 'Hide orbit palette'}
+                onClick={() => setOrbitPaletteCollapsed((v) => !v)}
+              >
+                Orbit
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -522,10 +544,12 @@ export default function App() {
             >
               ×
             </button>
-            <p className="app__memory-card-digits">{surfaceMemory.digits || '—'}</p>
-            {surfaceMemory.memoryNote ? (
-              <p className="app__memory-card-note">{surfaceMemory.memoryNote}</p>
-            ) : null}
+            <MemoryCard
+              memory={surfaceMemory}
+              fossilBornAt={history.find((e) => e.id === surfaceMemory.fossilId)?.createdAt}
+              hostLabel={focusSystemBody?.label}
+              impactTotal={focusSystemBody?.planet.scars.filter((s) => s.kind !== 'native').length ?? 0}
+            />
           </aside>
         ) : null}
 
@@ -753,6 +777,9 @@ export default function App() {
             setSystemBodies([])
           }}
           onRemoveBody={handleRemoveBody}
+          onRenameBody={handleRenameBody}
+          collapsed={orbitPaletteCollapsed}
+          onToggleCollapse={() => setOrbitPaletteCollapsed((v) => !v)}
         />
       ) : null}
     </div>

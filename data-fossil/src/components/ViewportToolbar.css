@@ -11,8 +11,8 @@
   place-items: center;
   padding: 0;
   color: var(--text-muted);
-  background: rgba(236, 235, 232, 0.92);
-  border: 1px solid var(--border);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
   border-radius: 2px;
   backdrop-filter: blur(6px);
   cursor: pointer;
@@ -28,13 +28,13 @@
 }
 
 .vp-tools__btn--on {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--accent-hot);
+  background: var(--accent-fill-hot);
+  border-color: var(--accent-line);
 }
 
 .vp-tools__btn--on:hover {
-  background: var(--accent-hot);
-  border-color: var(--accent-hot);
-  color: var(--accent-ink);
+  background: rgba(217, 154, 78, 0.34);
+  border-color: var(--accent);
+  color: var(--accent-hot);
 }

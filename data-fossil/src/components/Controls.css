@@ -1,13 +1,75 @@
 .controls {
+  /* Translucent palette: children draw with these scoped tokens, so every
+     card / input / button inside goes glassy without per-rule overrides. */
+  --bg: rgba(255, 255, 255, 0.035);
+  --panel: transparent;
+  --panel-deep: rgba(255, 255, 255, 0.07);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-soft: rgba(255, 255, 255, 0.06);
+
+  position: absolute;
+  z-index: 8;
+  top: 4.6rem;
+  right: 1.35rem;
+  bottom: 5.4rem;
+  width: min(300px, calc(100% - 2.7rem));
   display: flex;
   flex-direction: column;
   gap: 1.15rem;
-  padding: 1.25rem 1.2rem 1.5rem;
+  padding: 1rem 1.05rem 1.3rem;
   color: var(--text);
-  background: var(--panel);
-  border-left: 1px solid var(--border);
+  background: rgba(10, 10, 12, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
   font-family: 'DM Sans', sans-serif;
+}
+
+.controls__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0 -0.35rem;
+}
+
+.controls__collapse {
+  width: 1.7rem;
+  height: 1.7rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.controls__collapse:hover {
+  color: var(--accent-hot);
+  background: var(--accent-fill);
+  border-color: var(--accent-line);
+}
+
+@media (max-width: 800px) {
+  .controls {
+    top: auto;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    width: auto;
+    max-height: 52vh;
+  }
 }
 
 .controls__palette-label {
@@ -65,10 +127,10 @@
   text-transform: none;
   line-height: 1.35;
   color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  box-shadow: 0 4px 12px rgba(44, 43, 41, 0.08);
+  background: #141210;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px var(--shadow);
   opacity: 0;
   pointer-events: none;
   transform: translateY(3px);
@@ -118,7 +180,7 @@
   padding: 0.12rem;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: #c4c1bb;
+  background: var(--panel-deep);
   cursor: pointer;
   transition:
     background 0.14s ease,
@@ -140,8 +202,8 @@
   width: 1rem;
   height: 1rem;
   border-radius: 50%;
-  background: #f4f2ee;
-  box-shadow: 0 1px 2px rgba(44, 43, 41, 0.18);
+  background: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   transform: translateX(0);
   transition: transform 0.14s ease;
 }
@@ -183,6 +245,37 @@
 
 .layer-card--off .layer-card__name {
   color: var(--text-faint);
+}
+
+.layer-card__rename-hint {
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.layer-card__name:hover .layer-card__rename-hint,
+.layer-card__name:focus-visible .layer-card__rename-hint {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.layer-card__name-input {
+  flex: 1;
+  min-width: 0;
+  height: 1.55rem;
+  padding: 0 0.4rem;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .layer-card__header {
@@ -550,10 +643,10 @@
   margin: 0;
   padding: 0.22rem;
   list-style: none;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  box-shadow: 0 8px 18px rgba(44, 43, 41, 0.12);
+  background: #141210;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  box-shadow: 0 10px 24px var(--shadow);
 }
 
 .field-select__option {
@@ -577,8 +670,8 @@
 }
 
 .field-select__option.is-active {
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--accent-fill-hot);
+  color: var(--accent-hot);
 }
 
 .controls__color-row {
@@ -602,15 +695,16 @@
   height: 2.25rem;
   padding: 0 0.85rem;
   font: inherit;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 2px;
+  border-radius: 6px;
   cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 
 .controls__btn:hover {
@@ -619,14 +713,14 @@
 }
 
 .controls__btn--primary {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--accent-hot);
+  background: var(--accent-fill);
+  border-color: var(--accent-line);
 }
 
 .controls__btn--primary:hover {
-  background: var(--accent-hot);
-  border-color: var(--accent-hot);
+  background: var(--accent-fill-hot);
+  border-color: var(--accent);
 }
 
 .controls__btn:disabled,
@@ -683,9 +777,9 @@
 }
 
 .controls__mode--active {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--accent-hot);
+  background: var(--accent-fill-hot);
+  border-color: var(--accent-line);
 }
 
 .controls__slider {

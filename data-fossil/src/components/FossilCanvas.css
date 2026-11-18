@@ -5,7 +5,7 @@
   height: 100%;
   min-height: 280px;
   overflow: hidden;
-  background: #e4e2de;
+  background: #040406;
 }
 
 .fossil-canvas canvas {
@@ -26,9 +26,9 @@
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: #2c2b29;
-  background: rgba(236, 235, 232, 0.92);
-  border: 1px solid #c49a5a;
+  color: var(--text);
+  background: var(--glass-strong);
+  border: 1px solid var(--accent);
   padding: 2px 6px;
   border-radius: 2px;
   white-space: nowrap;
@@ -42,7 +42,7 @@
   letter-spacing: 0.04em;
   user-select: none;
   pointer-events: none;
-  text-shadow: 0 0 4px rgba(228, 226, 222, 0.9);
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.9);
 }
 
 .fossil-world-label {
@@ -51,9 +51,9 @@
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #6a6762;
-  background: rgba(228, 226, 222, 0.88);
-  border: 1px solid #b8b5af;
+  color: var(--text-muted);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
   padding: 3px 8px;
   border-radius: 2px;
   user-select: none;
@@ -65,9 +65,9 @@
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.06em;
-  color: #2c2b29;
-  background: rgba(236, 235, 232, 0.9);
-  border: 1px solid #c49a5a;
+  color: var(--text);
+  background: var(--glass-strong);
+  border: 1px solid var(--glass-border);
   padding: 2px 6px;
   border-radius: 2px;
   white-space: nowrap;
@@ -81,9 +81,9 @@
 }
 
 .fossil-planet-label--pickable {
-  border-color: #c49a5a;
-  background: rgba(212, 168, 92, 0.28);
-  box-shadow: 0 0 0 1px rgba(196, 154, 90, 0.45);
+  border-color: var(--accent);
+  background: rgba(217, 154, 78, 0.3);
+  box-shadow: 0 0 0 1px rgba(217, 154, 78, 0.5), 0 0 12px rgba(217, 154, 78, 0.35);
   pointer-events: auto;
   cursor: pointer;
 }
@@ -103,22 +103,22 @@
   height: 0;
   border-left: 7px solid transparent;
   border-right: 7px solid transparent;
-  border-bottom: 12px solid #c49a5a;
-  filter: drop-shadow(0 1px 1px rgba(42, 36, 24, 0.35));
+  border-bottom: 12px solid var(--accent);
+  filter: drop-shadow(0 0 6px rgba(217, 154, 78, 0.6));
 }
 
 .fossil-surface-guide[data-mode='edge'] .fossil-surface-guide__arrow {
-  border-bottom-color: #b8894a;
+  border-bottom-color: var(--accent-hot);
 }
 
 .fossil-planet-label--chase-mover {
-  border-color: #c49a5a;
-  background: rgba(196, 154, 90, 0.92);
-  color: #2a2418;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .fossil-planet-label--chase-target {
-  border-color: #8a867f;
-  background: rgba(236, 235, 232, 0.96);
-  box-shadow: 0 0 0 1px rgba(42, 36, 24, 0.18);
+  border-color: var(--text-muted);
+  background: var(--glass-strong);
+  box-shadow: 0 0 0 1px rgba(236, 228, 214, 0.18);
 }

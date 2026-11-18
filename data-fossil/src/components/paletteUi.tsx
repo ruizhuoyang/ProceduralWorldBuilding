@@ -133,13 +133,33 @@ export function PaletteSelect<T extends string>({
 export function PaletteShell({
   label,
   children,
+  collapsed = false,
+  onToggleCollapse,
 }: {
   label: string
   children: ReactNode
+  /** When set, the palette shows a collapse button and folds into a small tab. */
+  collapsed?: boolean
+  onToggleCollapse?: () => void
 }) {
+  // Collapsed: nothing floats here — the toggle lives in the top VIEW / EDIT switch.
+  if (onToggleCollapse && collapsed) return null
   return (
     <aside className="controls" aria-label={`${label} palette`}>
-      <p className="controls__palette-label">{label}</p>
+      <div className="controls__head">
+        <p className="controls__palette-label">{label}</p>
+        {onToggleCollapse ? (
+          <button
+            type="button"
+            className="controls__collapse"
+            onClick={onToggleCollapse}
+            aria-label={`Hide ${label} palette`}
+            title={`Hide ${label} palette`}
+          >
+            ›
+          </button>
+        ) : null}
+      </div>
       {children}
     </aside>
   )
