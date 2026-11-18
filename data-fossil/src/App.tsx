@@ -612,7 +612,7 @@ export default function App() {
                     : 'Exit surface panorama'
                   : canViewSystemSurface
                     ? 'Surface panorama of the selected system planet'
-                    : 'Surface panorama — WASD move, drag to look'
+                    : 'Surface panorama — WASD move, Shift to run, drag to look'
               }
               onClick={() => {
                 if (surfaceView) {

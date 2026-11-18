@@ -165,6 +165,8 @@ type SurfaceFpsState = {
   pickRaycaster: THREE.Raycaster
   raycaster: THREE.Raycaster
   up: THREE.Vector3
+  /** Smoothed view-up: mostly radial, so the horizon does not wobble with every facet. */
+  camUp: THREE.Vector3
   foot: THREE.Vector3
 }
 
@@ -203,15 +205,19 @@ const _surfaceUp = new THREE.Vector3(0, 1, 0)
 
 const STUDIO_FOV = 40
 const INTERIOR_FOV = 80
-const SURFACE_FOV = 100
-/** Stand close to the crust without sinking into local noise / imprint relief. */
-const SURFACE_EYE_HEIGHT = 0.036
+/** Vertical FOV. ~68° keeps ~100° horizontal on 16:9 without stretched, "steep" side edges. */
+const SURFACE_FOV = 68
+/** Low eye = the planet reads large and the horizon dips only a few degrees. */
+const SURFACE_EYE_HEIGHT = 0.016
 /** Near must stay well below eye height so looking down does not slice the mesh. */
-const SURFACE_NEAR = 0.0012
+const SURFACE_NEAR = 0.0005
 /** Icosphere frequency for the surface walk — dense enough to carve craters into. */
 const SURFACE_MESH_DETAIL = 64
-/** ~50% of the previous 0.7 pace — slow approach to imprints; still dt-scaled. */
-const SURFACE_MOVE_SPEED = 0.34
+/** Walking pace scaled to the lower eye; hold Shift to cover ground faster. */
+const SURFACE_MOVE_SPEED = 0.14
+const SURFACE_SPRINT = 2.6
+/** How much of the local facet normal leaks into the view-up (rest is radial). */
+const SURFACE_UP_NORMAL_MIX = 0.2
 const SURFACE_LOOK_SENS = 0.0028
 const SURFACE_PITCH_MIN = -0.98
 const SURFACE_PITCH_MAX = 1.05
@@ -531,10 +537,22 @@ function surfaceLookBasis(
   outRight.crossVectors(outForward, up).normalize()
 }
 
-function applySurfacePose(bag: SceneBag) {
+const _upTarget = new THREE.Vector3()
+
+/** Ease the view-up toward a mostly radial direction (snap=true sets it outright). */
+function updateSurfaceCamUp(fps: SurfaceFpsState, snap: boolean) {
+  _upTarget.copy(fps.foot)
+  if (_upTarget.lengthSq() < 1e-10) _upTarget.copy(fps.up)
+  _upTarget.normalize().multiplyScalar(1 - SURFACE_UP_NORMAL_MIX).addScaledVector(fps.up, SURFACE_UP_NORMAL_MIX)
+  if (_upTarget.lengthSq() < 1e-10) return
+  _upTarget.normalize()
+  if (snap) fps.camUp.copy(_upTarget)
+  else fps.camUp.lerp(_upTarget, 0.18).normalize()
+}
+
+function applySurfacePose(bag: SceneBag, snap = false) {
   const fps = bag.surfaceFps
   if (!fps) return
-  surfaceLookBasis(fps.up, fps.yaw, fps.pitch, _surfaceF, _surfaceR)
 
   // Re-seat the foot with a short normal cast so steep imprint relief cannot
   // leave the FrontSide lens underground (near-clip "破面").
@@ -550,8 +568,10 @@ function applySurfacePose(bag: SceneBag) {
     }
   }
 
-  bag.camera.position.copy(fps.foot).addScaledVector(fps.up, SURFACE_EYE_HEIGHT)
-  bag.camera.up.copy(fps.up)
+  updateSurfaceCamUp(fps, snap)
+  surfaceLookBasis(fps.camUp, fps.yaw, fps.pitch, _surfaceF, _surfaceR)
+  bag.camera.position.copy(fps.foot).addScaledVector(fps.camUp, SURFACE_EYE_HEIGHT)
+  bag.camera.up.copy(fps.camUp)
   bag.camera.lookAt(_surfaceV.copy(bag.camera.position).add(_surfaceF))
   bag.camera.updateMatrixWorld()
 }
@@ -572,6 +592,7 @@ function initSurfaceFps(bag: SceneBag, seekDir?: THREE.Vector3 | null) {
       pickRaycaster: new THREE.Raycaster(),
       raycaster: new THREE.Raycaster(),
       up: new THREE.Vector3(0, 1, 0),
+      camUp: new THREE.Vector3(0, 1, 0),
       foot: new THREE.Vector3(),
     }
   }
@@ -585,15 +606,16 @@ function initSurfaceFps(bag: SceneBag, seekDir?: THREE.Vector3 | null) {
   if (!raycastSurface(bag, seek, fps.foot, fps.up)) {
     pickSurfaceFoot(bag.rock.geometry, fps.foot, fps.up)
   }
+  updateSurfaceCamUp(fps, true)
   // Face roughly outward / horizon
-  surfaceLookBasis(fps.up, 0, 0, _surfaceF, _surfaceR)
+  surfaceLookBasis(fps.camUp, 0, 0, _surfaceF, _surfaceR)
   const desired = _surfaceV.copy(_surfaceF)
-  desired.addScaledVector(fps.up, -desired.dot(fps.up))
+  desired.addScaledVector(fps.camUp, -desired.dot(fps.camUp))
   if (desired.lengthSq() > 1e-8) {
-    const ref = _surfaceR.crossVectors(_surfaceUp, fps.up)
-    if (ref.lengthSq() < 1e-8) ref.set(1, 0, 0).cross(fps.up)
+    const ref = _surfaceR.crossVectors(_surfaceUp, fps.camUp)
+    if (ref.lengthSq() < 1e-8) ref.set(1, 0, 0).cross(fps.camUp)
     ref.normalize()
-    const north = _surfaceF.crossVectors(fps.up, ref).normalize()
+    const north = _surfaceF.crossVectors(fps.camUp, ref).normalize()
     fps.yaw = Math.atan2(desired.dot(ref), desired.dot(north))
   } else {
     fps.yaw = 0
@@ -607,7 +629,7 @@ function setSurfaceCamera(bag: SceneBag, seekDir?: THREE.Vector3 | null) {
   bag.camera.near = SURFACE_NEAR
   bag.camera.updateProjectionMatrix()
   initSurfaceFps(bag, seekDir)
-  applySurfacePose(bag)
+  applySurfacePose(bag, true)
 }
 
 function stepSurfaceFps(bag: SceneBag, dt: number) {
@@ -624,14 +646,15 @@ function stepSurfaceFps(bag: SceneBag, dt: number) {
   if (fps.keys.has('KeyA') || fps.keys.has('KeyQ')) strafe -= 1
 
   if (forward !== 0 || strafe !== 0) {
-    surfaceLookBasis(fps.up, fps.yaw, fps.pitch, _surfaceF, _surfaceR)
-    _surfaceMove.copy(_surfaceF).addScaledVector(fps.up, -_surfaceF.dot(fps.up))
+    surfaceLookBasis(fps.camUp, fps.yaw, fps.pitch, _surfaceF, _surfaceR)
+    _surfaceMove.copy(_surfaceF).addScaledVector(fps.camUp, -_surfaceF.dot(fps.camUp))
     if (_surfaceMove.lengthSq() > 1e-8) _surfaceMove.normalize()
     else _surfaceMove.set(0, 0, 0)
     _surfaceMove.multiplyScalar(forward)
     _surfaceMove.addScaledVector(_surfaceR, strafe)
     if (_surfaceMove.lengthSq() > 1e-8) {
-      _surfaceMove.normalize().multiplyScalar(SURFACE_MOVE_SPEED * stepDt)
+      const sprint = fps.keys.has('ShiftLeft') || fps.keys.has('ShiftRight') ? SURFACE_SPRINT : 1
+      _surfaceMove.normalize().multiplyScalar(SURFACE_MOVE_SPEED * sprint * stepDt)
       _surfaceV.copy(fps.foot).add(_surfaceMove)
       if (raycastSurface(bag, _surfaceV, fps.foot, fps.up)) {
         applySurfacePose(bag)
@@ -1339,8 +1362,13 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       bag.surfaceBodyId = null
       const p = paramsRef.current
       const prev = bag.rock.geometry
-      const { geometry, seed, regions, radiusMin, radiusMax } = buildFossilGeometry(p)
+      // Walking the plain fossil too: dense mesh so a low eye does not see big flat facets.
+      const { geometry, seed, regions, radiusMin, radiusMax } = buildFossilGeometry(
+        p,
+        bag.surfaceView ? { frequency: SURFACE_MESH_DETAIL } : undefined,
+      )
       bag.rock.geometry = geometry
+      bag.rock.userData.denseSurface = bag.surfaceView
       prev.dispose()
       applyStoneAppearance(seed, p, radiusMin, radiusMax)
       onSeedChangeRef.current(seed)
@@ -1617,7 +1645,7 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
     const canvasEl = bag.renderer.domElement
     const onKeyDown = (e: KeyboardEvent) => {
       if (!bag.surfaceView || !bag.surfaceFps) return
-      if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD' || e.code === 'KeyQ' || e.code === 'KeyZ') {
+      if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD' || e.code === 'KeyQ' || e.code === 'KeyZ' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') {
         bag.surfaceFps.keys.add(e.code)
         e.preventDefault()
       }
@@ -1878,6 +1906,9 @@ const FossilCanvas = forwardRef<FossilCanvasHandle, FossilCanvasProps>(function 
       if (bag.surfaceView) resetSurfaceGuide(bag)
       bag.rebuild?.()
       if (bag.surfaceView) updateSurfaceGuideArrow(bag, surfaceBody)
+    } else if (bag.rock.userData.denseSurface) {
+      // Back to the studio: drop the dense walk mesh for the normal-resolution one.
+      bag.rebuild?.()
     }
   }, [surfaceBody, surfaceView, interiorView])
 
